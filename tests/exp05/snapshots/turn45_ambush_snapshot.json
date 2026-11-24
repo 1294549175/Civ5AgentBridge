@@ -1,0 +1,180 @@
+{
+  "scenario_id": "EXP05_TURN45_NORTH_RIVER_AMBUSH",
+  "description": "第45回合离线沙盘快照：己方3个单位（侦察兵101、复合弓102、矛兵103）向东北迷雾区推进；侦察兵第1步至(15,18)安全，第2步至(16,18)揭开战争迷雾暴露3支匈奴主力军团触发LEVEL 2警报；侧翼(14,17)有1名35HP残血蛮族弓手用于验证复合弓射击未死后的LEVEL 1参谋长战术补刀重规划。",
+  "sight_radius": 2,
+  "prev_handoff": {
+    "from_turn": 44,
+    "long_term_strategy": "依托北京东北方向的北河丘陵地带扩展前哨视野，逐步清理零星蛮族，为第50回合前建立第二分城扫清北线通道。",
+    "active_operations": [
+      {
+        "op_name": "北河迷雾侦察与高地推进",
+        "assigned_unit_ids": [101, 102, 103],
+        "status": "IN_PROGRESS",
+        "next_turn_focus": "侦察兵101沿(15,18)->(16,18)向东探明迷雾区，复合弓102与矛兵103跟进清理侧翼残余蛮族并占领河岸丘陵。"
+      }
+    ],
+    "unresolved_threats": [
+      "侧翼(14,17)仍有1支残血蛮族弓箭手(35HP)尚未肃清",
+      "东北方向(16,18)以东处于战争迷雾中，匈奴边境动向不明"
+    ],
+    "last_turn_execution_summary": "第44回合复合弓102重创(14,17)蛮族弓箭手至35HP，侦察兵101前移至(14,18)待命，全军无伤亡。"
+  },
+  "initial_overview": {
+    "turn_number": 45,
+    "player_civ": "中国",
+    "yields": {
+      "gold": 265,
+      "gold_per_turn": 15,
+      "science_per_turn": 42,
+      "happiness": 7,
+      "strategic_resources": {
+        "RESOURCE_HORSES": 4,
+        "RESOURCE_IRON": 2
+      }
+    },
+    "our_units": [
+      {
+        "unit_id": 101,
+        "name": "第1侦察队",
+        "unit_type": "UNIT_SCOUT",
+        "domain": "LAND",
+        "x": 14,
+        "y": 18,
+        "hp": 100,
+        "max_hp": 100,
+        "moves_left": 2.0,
+        "max_moves": 2.0,
+        "combat_str": 5,
+        "ranged_str": 0,
+        "range": 0,
+        "is_fortified": false,
+        "can_act": true
+      },
+      {
+        "unit_id": 102,
+        "name": "禁卫复合弓营",
+        "unit_type": "UNIT_COMPOSITE_BOWMAN",
+        "domain": "LAND",
+        "x": 13,
+        "y": 17,
+        "hp": 100,
+        "max_hp": 100,
+        "moves_left": 2.0,
+        "max_moves": 2.0,
+        "combat_str": 7,
+        "ranged_str": 11,
+        "range": 2,
+        "is_fortified": false,
+        "can_act": true
+      },
+      {
+        "unit_id": 103,
+        "name": "北河长矛营",
+        "unit_type": "UNIT_SPEARMAN",
+        "domain": "LAND",
+        "x": 13,
+        "y": 18,
+        "hp": 95,
+        "max_hp": 100,
+        "moves_left": 2.0,
+        "max_moves": 2.0,
+        "combat_str": 11,
+        "ranged_str": 0,
+        "range": 0,
+        "is_fortified": false,
+        "can_act": true
+      }
+    ],
+    "visible_enemies": [
+      {
+        "enemy_id": "63:501",
+        "owner_id": 63,
+        "owner_name": "蛮族",
+        "is_barbarian": true,
+        "unit_type": "UNIT_BARBARIAN_ARCHER",
+        "x": 14,
+        "y": 17,
+        "hp": 35,
+        "combat_str": 4,
+        "ranged_str": 7,
+        "enemy_killed": false
+      }
+    ],
+    "our_cities": [
+      {
+        "city_id": 1,
+        "name": "北京",
+        "x": 11,
+        "y": 15,
+        "pop": 7,
+        "hp": 100,
+        "current_production": "UNIT_COMPOSITE_BOWMAN",
+        "turns_left": 2
+      }
+    ],
+    "visible_enemy_cities": []
+  },
+  "map_tiles": [
+    {"x": 12, "y": 17, "terrain": "TERRAIN_GRASS", "feature": null, "is_hills": false, "has_river": false, "initially_revealed": true},
+    {"x": 12, "y": 18, "terrain": "TERRAIN_PLAINS", "feature": null, "is_hills": false, "has_river": false, "initially_revealed": true},
+    {"x": 13, "y": 16, "terrain": "TERRAIN_GRASS", "feature": null, "is_hills": false, "has_river": false, "initially_revealed": true},
+    {"x": 13, "y": 17, "terrain": "TERRAIN_PLAINS", "feature": null, "is_hills": true, "has_river": true, "initially_revealed": true},
+    {"x": 13, "y": 18, "terrain": "TERRAIN_PLAINS", "feature": null, "is_hills": false, "has_river": true, "initially_revealed": true},
+    {"x": 13, "y": 19, "terrain": "TERRAIN_PLAINS", "feature": "FEATURE_FOREST", "is_hills": false, "has_river": false, "initially_revealed": true},
+    {"x": 14, "y": 16, "terrain": "TERRAIN_PLAINS", "feature": null, "is_hills": false, "has_river": false, "initially_revealed": true},
+    {"x": 14, "y": 17, "terrain": "TERRAIN_PLAINS", "feature": null, "is_hills": false, "has_river": false, "initially_revealed": true},
+    {"x": 14, "y": 18, "terrain": "TERRAIN_PLAINS", "feature": null, "is_hills": true, "has_river": true, "initially_revealed": true},
+    {"x": 14, "y": 19, "terrain": "TERRAIN_GRASS", "feature": "FEATURE_FOREST", "is_hills": false, "has_river": false, "initially_revealed": true},
+    {"x": 15, "y": 17, "terrain": "TERRAIN_PLAINS", "feature": null, "is_hills": false, "has_river": false, "initially_revealed": true},
+    {"x": 15, "y": 18, "terrain": "TERRAIN_PLAINS", "feature": null, "is_hills": true, "has_river": true, "initially_revealed": true},
+    {"x": 15, "y": 19, "terrain": "TERRAIN_PLAINS", "feature": null, "is_hills": false, "has_river": false, "initially_revealed": true},
+    {"x": 16, "y": 17, "terrain": "TERRAIN_PLAINS", "feature": null, "is_hills": false, "has_river": false, "initially_revealed": true},
+    {"x": 16, "y": 18, "terrain": "TERRAIN_PLAINS", "feature": null, "is_hills": false, "has_river": false, "initially_revealed": true},
+    {"x": 16, "y": 19, "terrain": "TERRAIN_PLAINS", "feature": null, "is_hills": false, "has_river": false, "initially_revealed": true},
+    {"x": 17, "y": 17, "terrain": "TERRAIN_PLAINS", "feature": null, "is_hills": false, "has_river": false, "initially_revealed": false},
+    {"x": 17, "y": 18, "terrain": "TERRAIN_PLAINS", "feature": null, "is_hills": false, "has_river": false, "initially_revealed": false},
+    {"x": 17, "y": 19, "terrain": "TERRAIN_PLAINS", "feature": null, "is_hills": true, "has_river": false, "initially_revealed": false},
+    {"x": 18, "y": 18, "terrain": "TERRAIN_PLAINS", "feature": null, "is_hills": false, "has_river": false, "initially_revealed": false}
+  ],
+  "hidden_fog_enemies": [
+    {
+      "enemy_id": "2:901",
+      "owner_id": 2,
+      "owner_name": "匈奴",
+      "is_barbarian": false,
+      "unit_type": "UNIT_HUN_HORSE_ARCHER",
+      "x": 17,
+      "y": 17,
+      "hp": 100,
+      "combat_str": 7,
+      "ranged_str": 10,
+      "enemy_killed": false
+    },
+    {
+      "enemy_id": "2:902",
+      "owner_id": 2,
+      "owner_name": "匈奴",
+      "is_barbarian": false,
+      "unit_type": "UNIT_HUN_BATTERING_RAM",
+      "x": 18,
+      "y": 18,
+      "hp": 100,
+      "combat_str": 10,
+      "ranged_str": 0,
+      "enemy_killed": false
+    },
+    {
+      "enemy_id": "2:903",
+      "owner_id": 2,
+      "owner_name": "匈奴",
+      "is_barbarian": false,
+      "unit_type": "UNIT_HUN_HORSE_ARCHER",
+      "x": 17,
+      "y": 19,
+      "hp": 100,
+      "combat_str": 7,
+      "ranged_str": 10,
+      "enemy_killed": false
+    }
+  ]
+}

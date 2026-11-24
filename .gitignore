@@ -1,0 +1,22 @@
+# Python 缓存与虚拟环境
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# 测试运行产物与临时文件
+tests/**/output/
+*.log
+*.db
+*.sqlite
+*.sqlite3
+
+# 编辑器与系统文件
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

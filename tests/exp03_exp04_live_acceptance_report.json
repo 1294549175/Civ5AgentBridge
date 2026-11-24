@@ -1,0 +1,141 @@
+{
+  "mode": "live",
+  "exp03": {
+    "ping_50x": {
+      "passed": true,
+      "count": 50,
+      "lock_errors": 0,
+      "avg_rtt_ms": 219.94,
+      "p50_rtt_ms": 212.87,
+      "p95_rtt_ms": 301.62
+    },
+    "direct_32kb": {
+      "passed": true,
+      "bytes_verified": 32768,
+      "rtt_ms": 440.67
+    },
+    "chunked_32kb": {
+      "passed": true,
+      "bytes_verified": 32768,
+      "rtt_ms": 571.62
+    }
+  },
+  "exp04": {
+    "turn_overview": {
+      "passed": true,
+      "turn_number": 0,
+      "player_civ": "美國",
+      "yields": {
+        "happiness": 9,
+        "gold": 0,
+        "gold_per_turn": 0,
+        "strategic_resources": {},
+        "science_per_turn": 0
+      },
+      "unit_count": 2,
+      "city_count": 0,
+      "visible_enemies_count": 0,
+      "visible_enemy_cities_count": 0,
+      "rtt_ms": 427.14
+    },
+    "unit_context_candidates": {
+      "passed": true,
+      "unit": {
+        "moves_left": 2,
+        "max_hp": 100,
+        "can_act": true,
+        "is_fortified": false,
+        "range": 0,
+        "domain": "LAND",
+        "unit_id": 8192,
+        "y": 30,
+        "x": 14,
+        "name": "開拓者",
+        "unit_type": "UNIT_SETTLER",
+        "ranged_str": 0,
+        "combat_str": 0,
+        "hp": 100,
+        "max_moves": 2
+      },
+      "tiles_scanned": 17,
+      "candidate_count": 5,
+      "sample_candidates": [
+        {
+          "note": "Step move to adjacent hex",
+          "action_id": "ACT_01",
+          "target_x": 13,
+          "target_y": 30,
+          "action_type": "MOVE_STEP",
+          "estimated_cost_moves": 1
+        },
+        {
+          "note": "Step move to adjacent hex",
+          "action_id": "ACT_02",
+          "target_x": 13,
+          "target_y": 31,
+          "action_type": "MOVE_STEP",
+          "estimated_cost_moves": 1
+        },
+        {
+          "note": "Step move to adjacent hex",
+          "action_id": "ACT_03",
+          "target_x": 13,
+          "target_y": 29,
+          "action_type": "MOVE_STEP",
+          "estimated_cost_moves": 1
+        },
+        {
+          "note": "Step move to adjacent hex",
+          "action_id": "ACT_04",
+          "target_x": 14,
+          "target_y": 29,
+          "action_type": "MOVE_STEP",
+          "estimated_cost_moves": 1
+        },
+        {
+          "note": "Hold / Skip remaining movement this turn",
+          "action_id": "ACT_05",
+          "target_x": 14,
+          "target_y": 30,
+          "action_type": "SKIP_TURN",
+          "estimated_cost_moves": 0
+        }
+      ],
+      "rtt_ms": 684.16
+    },
+    "action_settlement_and_delta": {
+      "passed": true,
+      "action_executed": "MOVE_STEP",
+      "target_xy": [
+        13,
+        30
+      ],
+      "settle_wait_ms": 391,
+      "unit_after": {
+        "moves_left": 0,
+        "max_hp": 100,
+        "can_act": false,
+        "is_fortified": false,
+        "range": 0,
+        "domain": "LAND",
+        "unit_id": 8192,
+        "y": 30,
+        "x": 13,
+        "name": "開拓者",
+        "unit_type": "UNIT_SETTLER",
+        "ranged_str": 0,
+        "combat_str": 0,
+        "hp": 100,
+        "max_moves": 2
+      },
+      "newly_revealed_tiles_count": 1,
+      "newly_spotted_count": 0,
+      "sync_frame_comparison": {
+        "sync_spotted_count": 0,
+        "sync_moves_left": 2
+      },
+      "total_rtt_ms": 790.9
+    }
+  },
+  "all_passed": true
+}

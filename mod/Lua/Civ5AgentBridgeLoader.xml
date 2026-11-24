@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Civ5AgentBridgeLoader.xml —— InGameUIAddin 空壳装配布局
+  职责：以 LuaContext 子上下文装配真正的桥接上下文对 Civ5AgentBridgeUI.xml + .lua
+-->
+<Context ColorSet="Beige_Black" Font="TwCenMT20" FontStyle="Shadow">
+  <LuaContext FileName="Civ5AgentBridgeUI" ID="Civ5AgentBridgeUI"/>
+</Context>

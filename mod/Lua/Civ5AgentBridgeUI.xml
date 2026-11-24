@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Civ5AgentBridgeUI.xml —— 智能体指挥桥接 UI 上下文布局
+  做什么：提供顶部右侧极简状态指示按钮（可手动点击触发态势立即导出），并承载 ContextPtr:SetUpdate 帧轮询。
+-->
+<Context ColorSet="Beige_Black" Font="TwCenMT16" FontStyle="Shadow">
+  <Box ID="BridgeStatusBar" Anchor="R,T" Offset="240,28" Size="210,28" Color="0,0,0,160">
+    <GridButton ID="BridgeSyncButton" Anchor="C,C" Size="204,24" Style="SmallButton" ToolTip="点击立即将当前回合可见态势同步至外部智能体指挥台 (Civ5AgentBridge)">
+      <Label ID="BridgeStatusLabel" Anchor="C,C" Offset="0,-1" Font="TwCenMT16" ColorSet="Beige_Black_Alpha" FontStyle="Shadow" String="Agent Bridge: Ready"/>
+    </GridButton>
+  </Box>
+</Context>
