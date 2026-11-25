@@ -18,5 +18,6 @@ tests/**/output/
 # 编辑器与系统文件
 .vscode/
 .idea/
+.mimosa/
 .DS_Store
 Thumbs.db
