@@ -583,6 +583,7 @@ local CITY_FIELDS = fieldSet({
     "foodTurnsLeft", "foodGrowthBlocked", "foodDiffTimes100",
     "culturePerTurn", "faithPerTurn",
     "orderQueueLength", "isProduction", "isProductionProcess", "productionTurnsLeft", "productionNameKey",
+    "prodBuildingId", "prodUnitId", "prodProjectId", "prodProcessId",
     "garrison", "realBuildings", "cityPlots",
     "canRangeStrike", "canRangeStrikeNow", "canRangeStrikeAt",
     "purchasable", "affordable", "costs",
@@ -595,6 +596,7 @@ local CITY_FIELDS = fieldSet({
     foodTurnsLeft = -1, foodGrowthBlocked = false,
     culturePerTurn = 0, faithPerTurn = 0,
     orderQueueLength = 0, isProduction = false, isProductionProcess = false, productionTurnsLeft = 0,
+    prodBuildingId = -1, prodUnitId = -1, prodProjectId = -1, prodProcessId = -1,
     realBuildings = {}, cityPlots = {},
     canRangeStrike = false, canRangeStrikeNow = false, canRangeStrikeAt = false,
     purchasable = { units = {}, buildings = {} },
@@ -895,6 +897,10 @@ CityMethods.IsProduction = function(c) return c._s.isProduction == true end
 CityMethods.IsProductionProcess = function(c) return c._s.isProductionProcess == true end
 CityMethods.GetProductionTurnsLeft = function(c) return c._s.productionTurnsLeft end
 CityMethods.GetProductionNameKey = function(c) return c._s.productionNameKey end
+CityMethods.GetProductionBuilding = function(c) return c._s.prodBuildingId or -1 end
+CityMethods.GetProductionUnit = function(c) return c._s.prodUnitId or -1 end
+CityMethods.GetProductionProject = function(c) return c._s.prodProjectId or -1 end
+CityMethods.GetProductionProcess = function(c) return c._s.prodProcessId or -1 end
 CityMethods.GetYieldRate = function(c, yieldType) return c._s.yields[yieldType] or 0 end
 CityMethods.GetProductionModifier = function(c) return c._s.productionModifier end
 CityMethods.FoodDifference = function(c) return c._s.foodNet end
@@ -1389,20 +1395,27 @@ local function makeGame(w)
                 yieldType = eYield,
             })
             if pCity == nil then return end
-            local pPlayer = w.players[pCity._s.owner]
-            if eYield == YieldTypes.YIELD_FAITH then
-                local cost = pCity:GetBuildingFaithPurchaseCost(bldID)
-                if pPlayer ~= nil then pPlayer._s.faith = math.max(0, pPlayer._s.faith - cost) end
+            local applyFn = function()
+                local pPlayer = w.players[pCity._s.owner]
+                if eYield == YieldTypes.YIELD_FAITH then
+                    local cost = pCity:GetBuildingFaithPurchaseCost(bldID)
+                    if pPlayer ~= nil then pPlayer._s.faith = math.max(0, pPlayer._s.faith - cost) end
+                else
+                    local cost = pCity:GetBuildingPurchaseCost(bldID)
+                    if pPlayer ~= nil then pPlayer._s.gold = math.max(0, pPlayer._s.gold - cost) end
+                end
+                pCity._s.realBuildings[bldID] = (pCity._s.realBuildings[bldID] or 0) + 1
+                if pCity._s.purchasable and pCity._s.purchasable.buildings then
+                    pCity._s.purchasable.buildings[bldID] = nil
+                end
+                if pCity._s.affordable and pCity._s.affordable.buildings then
+                    pCity._s.affordable.buildings[bldID] = nil
+                end
+            end
+            if (w.cityActionDelayTicks or 0) <= 0 then
+                applyFn()
             else
-                local cost = pCity:GetBuildingPurchaseCost(bldID)
-                if pPlayer ~= nil then pPlayer._s.gold = math.max(0, pPlayer._s.gold - cost) end
-            end
-            pCity._s.realBuildings[bldID] = (pCity._s.realBuildings[bldID] or 0) + 1
-            if pCity._s.purchasable and pCity._s.purchasable.buildings then
-                pCity._s.purchasable.buildings[bldID] = nil
-            end
-            if pCity._s.affordable and pCity._s.affordable.buildings then
-                pCity._s.affordable.buildings[bldID] = nil
+                table.insert(w.pendingCityActions, { ticksLeft = w.cityActionDelayTicks, apply = applyFn })
             end
         end,
         CityPurchaseUnit = function(pCity, unitTypeID, eYield)
@@ -1412,22 +1425,29 @@ local function makeGame(w)
                 yieldType = eYield,
             })
             if pCity == nil then return end
-            local pPlayer = w.players[pCity._s.owner]
-            if eYield == YieldTypes.YIELD_FAITH then
-                local cost = pCity:GetUnitFaithPurchaseCost(unitTypeID)
-                if pPlayer ~= nil then pPlayer._s.faith = math.max(0, pPlayer._s.faith - cost) end
-            else
-                local cost = pCity:GetUnitPurchaseCost(unitTypeID)
-                if pPlayer ~= nil then pPlayer._s.gold = math.max(0, pPlayer._s.gold - cost) end
+            local applyFn = function()
+                local pPlayer = w.players[pCity._s.owner]
+                if eYield == YieldTypes.YIELD_FAITH then
+                    local cost = pCity:GetUnitFaithPurchaseCost(unitTypeID)
+                    if pPlayer ~= nil then pPlayer._s.faith = math.max(0, pPlayer._s.faith - cost) end
+                else
+                    local cost = pCity:GetUnitPurchaseCost(unitTypeID)
+                    if pPlayer ~= nil then pPlayer._s.gold = math.max(0, pPlayer._s.gold - cost) end
+                end
+                w:addUnit({
+                    owner = pCity._s.owner,
+                    unitType = unitTypeID,
+                    x = pCity._s.x,
+                    y = pCity._s.y,
+                    moves = 0,
+                    readyToMove = false,
+                })
             end
-            w:addUnit({
-                owner = pCity._s.owner,
-                unitType = unitTypeID,
-                x = pCity._s.x,
-                y = pCity._s.y,
-                moves = 0,
-                readyToMove = false,
-            })
+            if (w.cityActionDelayTicks or 0) <= 0 then
+                applyFn()
+            else
+                table.insert(w.pendingCityActions, { ticksLeft = w.cityActionDelayTicks, apply = applyFn })
+            end
         end,
         CityPushOrder = function(pCity, eOrder, iData, bAlt, bShift, bCtrl)
             S.recordWrite(w, "CityPushOrder", {
@@ -1437,27 +1457,39 @@ local function makeGame(w)
                 clearQueue = bShift,
             })
             if pCity == nil then return end
-            local row = nil
-            local isProc = false
-            if eOrder == OrderTypes.ORDER_CONSTRUCT then
-                row = w.info.Buildings[iData]
-            elseif eOrder == OrderTypes.ORDER_TRAIN then
-                row = w.info.Units[iData]
-            elseif eOrder == OrderTypes.ORDER_CREATE then
-                row = w.info.Projects[iData]
-            elseif eOrder == OrderTypes.ORDER_MAINTAIN then
-                row = w.info.Processes[iData]
-                isProc = true
+            local applyFn = function()
+                local row = nil
+                local isProc = false
+                if eOrder == OrderTypes.ORDER_CONSTRUCT then
+                    row = w.info.Buildings[iData]
+                elseif eOrder == OrderTypes.ORDER_TRAIN then
+                    row = w.info.Units[iData]
+                elseif eOrder == OrderTypes.ORDER_CREATE then
+                    row = w.info.Projects[iData]
+                elseif eOrder == OrderTypes.ORDER_MAINTAIN then
+                    row = w.info.Processes[iData]
+                    isProc = true
+                end
+                local prevLen = pCity._s.orderQueueLength or 0
+                if bShift == true or prevLen == 0 then
+                    pCity._s.orderQueueLength = 1
+                    pCity._s.prodBuildingId = (eOrder == OrderTypes.ORDER_CONSTRUCT) and iData or -1
+                    pCity._s.prodUnitId = (eOrder == OrderTypes.ORDER_TRAIN) and iData or -1
+                    pCity._s.prodProjectId = (eOrder == OrderTypes.ORDER_CREATE) and iData or -1
+                    pCity._s.prodProcessId = (eOrder == OrderTypes.ORDER_MAINTAIN) and iData or -1
+                    pCity._s.isProduction = true
+                    pCity._s.isProductionProcess = isProc
+                    pCity._s.productionTurnsLeft = isProc and 0 or 5
+                    pCity._s.productionNameKey = (row and (row.Description or row.Type)) or tostring(iData)
+                else
+                    pCity._s.orderQueueLength = prevLen + 1
+                end
             end
-            if bShift == true then
-                pCity._s.orderQueueLength = 1
+            if (w.cityActionDelayTicks or 0) <= 0 then
+                applyFn()
             else
-                pCity._s.orderQueueLength = (pCity._s.orderQueueLength or 0) + 1
+                table.insert(w.pendingCityActions, { ticksLeft = w.cityActionDelayTicks, apply = applyFn })
             end
-            pCity._s.isProduction = true
-            pCity._s.isProductionProcess = isProc
-            pCity._s.productionTurnsLeft = isProc and 0 or 5
-            pCity._s.productionNameKey = (row and (row.Description or row.Type)) or tostring(iData)
         end,
         DoControl = function(eControl)
             S.recordWrite(w, "DoControl", { control = eControl })
@@ -1839,6 +1871,14 @@ function WorldMethods:tickSettlement(steps)
                 table.remove(self.pendingPlotBuys, i)
             end
         end
+        for i = #self.pendingCityActions, 1, -1 do
+            local req = self.pendingCityActions[i]
+            req.ticksLeft = req.ticksLeft - 1
+            if req.ticksLeft <= 0 then
+                req.apply()
+                table.remove(self.pendingCityActions, i)
+            end
+        end
     end
 end
 
@@ -1883,11 +1923,11 @@ function WorldMethods:clearLog() self.log = {} end
 
 local WORLD_OPTION_FIELDS = fieldSet({
     "width", "height", "activePlayer", "turn", "processingMessages", "canEndTurn",
-    "plotBuyDelayTicks", "cityScreenUp", "gameDefines",
+    "plotBuyDelayTicks", "cityActionDelayTicks", "cityScreenUp", "gameDefines",
     "teams", "players", "wars", "revealAll", "visibleAll", "units", "cities", "select",
 }, {
     width = 24, height = 20, activePlayer = 0, turn = 1, processingMessages = false,
-    canEndTurn = true, plotBuyDelayTicks = 1, cityScreenUp = false,
+    canEndTurn = true, plotBuyDelayTicks = 1, cityActionDelayTicks = 0, cityScreenUp = false,
 })
 
 local ALLOWED_CASE_GLOBALS = {
@@ -1926,7 +1966,9 @@ function S.newWorld(opts)
         turn = o.turn,
         processingMessages = o.processingMessages,
         plotBuyDelayTicks = o.plotBuyDelayTicks,
+        cityActionDelayTicks = o.cityActionDelayTicks,
         pendingPlotBuys = {},
+        pendingCityActions = {},
         endTurnRequested = false,
         ui = {
             headUnit = nil,
