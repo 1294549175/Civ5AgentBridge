@@ -1,56 +1,39 @@
 -- =============================================================================
 -- 文件：tests/m1sub1/engine_stubs.lua
--- 做什么：给《mod/Lua/CAB_InfoCollector.lua》的桩测试提供一套“假的游戏引擎环境”。
---         被测文件只读引擎、不写引擎，所以这里只需要把“读取类接口”按真实签名做出来，
---         再把“写入类接口”做成一碰就报错的陷阱。
--- 为什么：本子模块按用户决策 U-03 用引擎桩测试验证，本阶段不部署实机。
+-- 职责：为 M1Sub1（mod/Lua/CAB_InfoCollector.lua）离线验收提供纯净版《文明5：BNW v1.0.3.279》
+--       Lua 5.1 引擎桩、只读守卫与 DLL 避坑红线陷阱、调用日志、战争迷雾侧信道核查及深层世界快照。
+-- 依赖：由 tests/run_m1sub1_tests.py 在 lupa.lua51 中加载，依赖 Python 注入的 __py_read_file 回调。
+-- 对外契约：
+--   * 导出唯一测试框架全局表 CAB_TEST_STUBS（以及模拟 Civ5 引擎的全局符号 Players/Teams/Game/
+--     Map/UI/GameInfo/GameInfoActions/GameInfoTypes/GameDefines/Locale/Network/Events/Modding/
+--     DomainTypes/YieldTypes/ResourceUsageTypes/InterfaceModeTypes/EndTurnBlockingTypes/include/print）；
+--   * 不包含任何 AirRaidLegacyUnits / AirRaidCore 模拟逻辑（决策 D-05）。
 --
--- 提供内容（对应《SubM1工作计划.md》§10.1）：
---   1. include 垫片：从 mod/Lua/<模块名>.lua 加载源码，并记录已加载名单；
---   2. GameInfo / GameInfoActions 桩：按数据库表视图的语义取行；
---   3. 枚举表与 GameDefines：取值以本机游戏数据为准；
---   4. 只读守卫：写入类接口被调用时立即报错并记录；
---   5. 合成世界构建器：生成玩家、队伍、单位、城市和一张带行偏移的六边形网格地图；
---   6. 调用日志：记录判定类调用及其目标格当时的可见性；
---   7. 世界快照：用例结束后核对世界状态有没有被改动。
---
--- 怎么用（详见 test_collector.lua）：
---     local S = CAB_TEST_STUBS
---     local w = S.newWorld({ revealAll = 0 })
---     local u = w:addUnit({ owner = 0, unitType = "UNIT_WARRIOR", x = 10, y = 5 })
---
--- 引擎语义依据（均为本机 v1.0.3.279 的官方脚本与游戏数据）：
---   * Map.GetPlotXY(x, y, dx, dy)：越界返回 nil（Expansion2/UI/InGame/InGame.lua:600-601）；
---   * 地图距离：Map.PlotDistance(x1, y1, x2, y2)（InGame.lua:604）；
---   * 视野：pPlot:IsVisible(team, bIsDebug) / IsRevealed(team, bIsDebug)
---       （Expansion2/UI/InGame/PlotHelpManager.lua:125、:130）；
---   * 隐形：pUnit:IsInvisible(team, bIsDebug)（Expansion2/UI/InGame/PlotMouseoverInclude.lua:302）；
---   * 格上单位：pPlot:GetNumUnits() / GetUnit(i)，下标从 0 起（PlotMouseoverInclude.lua:298-301）；
---   * 玩家槽位：范围内的 Players[i] 恒返回对象，未参战的槽位是 IsAlive() 为假的“死玩家”
---       （官方循环里不判 nil 就调用：Popups/CultureOverview.lua:1798-1800、PlotMouseoverInclude.lua:50-54）；
---   * #GameInfo.<表> 是行数（FrontEnd/GameSetup/AdvancedSetup.lua:1089、Popups/Demographics.lua:400）。
---     所以官方惯用的 for i = 0, #GameInfoActions 会多访问一个越界项，而且不报错
---     （WorldView/UnitPanel.lua:202-206 直接读 action.Visible）——可见越界项不是 nil；
---   * GameDefines：MOVE_DENOMINATOR=60、MAX_HIT_POINTS=100、CITY_ATTACK_RANGE=2、BUY_PLOTS_DISABLED=0
---       （Expansion2/Gameplay/XML/GlobalDefines.xml:66、:974、:1078、:1501）。
---
--- 桩的已知近似（不能当成引擎事实，属于计划 §9.6 的待实机确认项）：
---   * 六边形网格按“奇数行右偏半格”摆放，不模拟地图卷绕（R-4）；
---   * GameInfo 越界时返回一个空表：由“越界项不是 nil”推出，具体返回什么没有实机证据；
---   * pPlot:IsVisibleEnemyUnit / IsEnemyCity 的精确语义未知。前者做成“不是自己的、且看得见”，
---     后者只做“不是自己的”，不看可见性。用例可以用 isVisibleEnemyUnit / isEnemyCity 字段直接指定返回值；
---   * 枚举的具体数值与 GameDefines.MAX_PLAYERS 是编译期常量，未能静态核实，这里是自洽的假设值。
---     用例与被测代码共用同一张表，所以数值偏差不影响测试结论。
+-- 设计与引擎语义依据（《docs/M1/M1Sub1/M1Sub1工作计划.md》§2、§4、§6 及 BNW 官方 UI 脚本）：
+--   1. 只读守卫（A-03）：全部写入类方法（Set*/Send*/Push*/Buy*/Purchase*/Delete*/Destroy*/Kill*/
+--      Disband*/Found* 及 DoControl/HandleAction/CityPurchase*/CityPushOrder/SelectionList*/
+--      ActivateNotification/RemoveNotification 等）及 Network/Events/Modding 一碰即记录并报错；
+--      仅放行临时 UI 选区探测例外 UI.SelectUnit 与 UI.ClearSelectionList（仍记日志）。
+--   2. 原版 DLL 避坑红线（A-05）：显式拦截 Unit:CanMoveOrAttackInto，一经调用立即触发违规报错。
+--   3. 战争迷雾与防侧信道（F-01 ~ F-06）：
+--      * 视野（IsVisible / IsRevealed）、隐形（IsInvisible）与科技资源（GetResourceType(team)）
+--        均按队伍严格隔离；
+--      * 调用日志同步记录目标格可见性、已探索态及是否为已探索敌对城市格，支持
+--        w:queriesOnInvisible() 与 w:queriesOnForbiddenFog()（F-03 专项断言）。
+--   4. 深层世界快照（A-03）：S.snapshot(w) 展开全部实体（teams/players/units/cities/plots）的
+--      内部状态表 _s（嵌套引用通过 objTag 折叠防循环），检出任何绕过接口的隐蔽写入，不含 UI 选中态。
+--   5. 兼容原生 BNW 与 IGE（D-05）：提供 w:setPlayer / w:setUnit / w:setCity 等实时变阵助手
+--      （自动作废基线快照），并支持存活/死玩家/nil 三种 Players[i] 槽位形态。
 -- =============================================================================
 
 local S = {}
 CAB_TEST_STUBS = S
 
 -- -----------------------------------------------------------------------------
--- 第 1 节：常量
+-- 第 1 节：枚举常量、GameDefines 与默认 GameInfo 行模板
 -- -----------------------------------------------------------------------------
 
--- 回合阻塞枚举的 24 个成员，顺序照计划 §9.1
+-- 官方 ActionInfoPanel.lua 中的 24 种回合结束阻塞枚举成员名
 local ENDTURN_BLOCKING_NAMES = {
     "ENDTURN_BLOCKING_UNITS",
     "ENDTURN_BLOCKING_UNIT_NEEDS_ORDERS",
@@ -78,32 +61,47 @@ local ENDTURN_BLOCKING_NAMES = {
     "ENDTURN_BLOCKING_CHOOSE_IDEOLOGY",
 }
 
--- 枚举表。成员名以官方脚本为准，数值是假设值（见文件头）。
 local ENUMS = {
     DomainTypes = {
-        DOMAIN_LAND = 0, DOMAIN_SEA = 1, DOMAIN_AIR = 2, DOMAIN_HOVER = 3,
-        DOMAIN_IMMOBILE = 4, NO_DOMAIN = -1,
+        DOMAIN_LAND = 0,
+        DOMAIN_SEA = 1,
+        DOMAIN_AIR = 2,
+        DOMAIN_HOVER = 3,
+        DOMAIN_IMMOBILE = 4,
+        NO_DOMAIN = -1,
     },
     YieldTypes = {
-        YIELD_FOOD = 0, YIELD_PRODUCTION = 1, YIELD_GOLD = 2, YIELD_SCIENCE = 3,
-        YIELD_CULTURE = 4, YIELD_FAITH = 5, NO_YIELD = -1,
+        YIELD_FOOD = 0,
+        YIELD_PRODUCTION = 1,
+        YIELD_GOLD = 2,
+        YIELD_SCIENCE = 3,
+        YIELD_CULTURE = 4,
+        YIELD_FAITH = 5,
+        NO_YIELD = -1,
     },
     ResourceUsageTypes = {
-        RESOURCEUSAGE_LUXURY = 0, RESOURCEUSAGE_STRATEGIC = 1, RESOURCEUSAGE_BONUS = 2,
+        RESOURCEUSAGE_LUXURY = 0,
+        RESOURCEUSAGE_STRATEGIC = 1,
+        RESOURCEUSAGE_BONUS = 2,
     },
     InterfaceModeTypes = {
         INTERFACEMODE_SELECTION = 0,
-        -- 以下数值不是引擎的真实值，只保证与 INTERFACEMODE_SELECTION 不同
         INTERFACEMODE_MOVE_TO = 1,
         INTERFACEMODE_RANGE_ATTACK = 2,
         INTERFACEMODE_AIRSTRIKE = 3,
         INTERFACEMODE_CITY_RANGE_ATTACK = 4,
         INTERFACEMODE_PURCHASE_PLOT = 5,
     },
-    EndTurnBlockingTypes = { NO_ENDTURN_BLOCKING_TYPE = -1 },
+    EndTurnBlockingTypes = {
+        NO_ENDTURN_BLOCKING_TYPE = -1,
+    },
 }
 
--- GameDefines 的默认值：前五个取自游戏数据（见文件头），后三个是假设值
+for i, name in ipairs(ENDTURN_BLOCKING_NAMES) do
+    ENUMS.EndTurnBlockingTypes[name] = i - 1
+end
+
+-- GameDefines 默认常量（对齐 Expansion2/Gameplay/XML/GlobalDefines.xml）
 local GAME_DEFINES_DEFAULT = {
     MOVE_DENOMINATOR = 60,
     MAX_HIT_POINTS = 100,
@@ -115,9 +113,8 @@ local GAME_DEFINES_DEFAULT = {
     MAX_PLAYERS = 64,
 }
 
--- GameInfo 的默认行。每个世界各拷贝一份，用例之间互不共享。
--- 行里的 ID 由构建器按顺序自动分配（从 0 起）。
--- 小写开头的列（water、usage、Movement）是桩用的辅助列，其余列名与游戏数据表一致。
+-- GameInfo 默认行模板（每个世界独立深拷贝，互不污染）
+-- 小写列（water / usage / Movement）为桩内部推导字段，大写列与游戏 SQLite 表结构一致。
 local DEFAULT_INFO_ROWS = {
     Terrains = {
         { Type = "TERRAIN_GRASS",    Description = "TXT_KEY_TERRAIN_GRASS" },
@@ -140,33 +137,60 @@ local DEFAULT_INFO_ROWS = {
         { Type = "IMPROVEMENT_PASTURE", Description = "TXT_KEY_IMPROVEMENT_PASTURE" },
     },
     Resources = {
-        { Type = "RESOURCE_HORSE", Description = "TXT_KEY_RESOURCE_HORSE",
-          usage = ENUMS.ResourceUsageTypes.RESOURCEUSAGE_STRATEGIC },
-        { Type = "RESOURCE_IRON",  Description = "TXT_KEY_RESOURCE_IRON",
-          usage = ENUMS.ResourceUsageTypes.RESOURCEUSAGE_STRATEGIC },
-        { Type = "RESOURCE_FUR",   Description = "TXT_KEY_RESOURCE_FUR",
-          usage = ENUMS.ResourceUsageTypes.RESOURCEUSAGE_LUXURY },
-        { Type = "RESOURCE_WHEAT", Description = "TXT_KEY_RESOURCE_WHEAT",
-          usage = ENUMS.ResourceUsageTypes.RESOURCEUSAGE_BONUS },
+        {
+            Type = "RESOURCE_HORSE",
+            Description = "TXT_KEY_RESOURCE_HORSE",
+            usage = ENUMS.ResourceUsageTypes.RESOURCEUSAGE_STRATEGIC,
+        },
+        {
+            Type = "RESOURCE_IRON",
+            Description = "TXT_KEY_RESOURCE_IRON",
+            usage = ENUMS.ResourceUsageTypes.RESOURCEUSAGE_STRATEGIC,
+        },
+        {
+            Type = "RESOURCE_FUR",
+            Description = "TXT_KEY_RESOURCE_FUR",
+            usage = ENUMS.ResourceUsageTypes.RESOURCEUSAGE_LUXURY,
+        },
+        {
+            Type = "RESOURCE_WHEAT",
+            Description = "TXT_KEY_RESOURCE_WHEAT",
+            usage = ENUMS.ResourceUsageTypes.RESOURCEUSAGE_BONUS,
+        },
     },
-    -- Moves 是“每回合能走的格数”；原始移动力点数 = Moves × MOVE_DENOMINATOR
     Units = {
-        { Type = "UNIT_WARRIOR",  Description = "TXT_KEY_UNIT_WARRIOR", Domain = "DOMAIN_LAND",
-          Combat = 8,  RangedCombat = 0,  Range = 0, Moves = 2 },
-        { Type = "UNIT_ARCHER",   Description = "TXT_KEY_UNIT_ARCHER",  Domain = "DOMAIN_LAND",
-          Combat = 5,  RangedCombat = 9,  Range = 2, Moves = 2 },
-        { Type = "UNIT_SETTLER",  Description = "TXT_KEY_UNIT_SETTLER", Domain = "DOMAIN_LAND",
-          Combat = 0,  RangedCombat = 0,  Range = 0, Moves = 2 },
-        { Type = "UNIT_WORKER",   Description = "TXT_KEY_UNIT_WORKER",  Domain = "DOMAIN_LAND",
-          Combat = 0,  RangedCombat = 0,  Range = 0, Moves = 2 },
-        { Type = "UNIT_CATAPULT", Description = "TXT_KEY_UNIT_CATAPULT", Domain = "DOMAIN_LAND",
-          Combat = 7,  RangedCombat = 11, Range = 2, Moves = 2 },
-        { Type = "UNIT_TRIREME",  Description = "TXT_KEY_UNIT_TRIREME", Domain = "DOMAIN_SEA",
-          Combat = 10, RangedCombat = 0,  Range = 0, Moves = 4 },
-        { Type = "UNIT_GALLEASS", Description = "TXT_KEY_UNIT_GALLEASS", Domain = "DOMAIN_SEA",
-          Combat = 12, RangedCombat = 13, Range = 2, Moves = 4 },
-        { Type = "UNIT_FIGHTER",  Description = "TXT_KEY_UNIT_FIGHTER", Domain = "DOMAIN_AIR",
-          Combat = 0,  RangedCombat = 0,  Range = 8, Moves = 2 },
+        {
+            Type = "UNIT_WARRIOR", Description = "TXT_KEY_UNIT_WARRIOR", Domain = "DOMAIN_LAND",
+            Combat = 8, RangedCombat = 0, Range = 0, Moves = 2,
+        },
+        {
+            Type = "UNIT_ARCHER", Description = "TXT_KEY_UNIT_ARCHER", Domain = "DOMAIN_LAND",
+            Combat = 5, RangedCombat = 9, Range = 2, Moves = 2,
+        },
+        {
+            Type = "UNIT_SETTLER", Description = "TXT_KEY_UNIT_SETTLER", Domain = "DOMAIN_LAND",
+            Combat = 0, RangedCombat = 0, Range = 0, Moves = 2,
+        },
+        {
+            Type = "UNIT_WORKER", Description = "TXT_KEY_UNIT_WORKER", Domain = "DOMAIN_LAND",
+            Combat = 0, RangedCombat = 0, Range = 0, Moves = 2,
+        },
+        {
+            Type = "UNIT_CATAPULT", Description = "TXT_KEY_UNIT_CATAPULT", Domain = "DOMAIN_LAND",
+            Combat = 7, RangedCombat = 11, Range = 2, Moves = 2,
+        },
+        {
+            Type = "UNIT_TRIREME", Description = "TXT_KEY_UNIT_TRIREME", Domain = "DOMAIN_SEA",
+            Combat = 10, RangedCombat = 0, Range = 0, Moves = 4,
+        },
+        {
+            Type = "UNIT_GALLEASS", Description = "TXT_KEY_UNIT_GALLEASS", Domain = "DOMAIN_SEA",
+            Combat = 12, RangedCombat = 13, Range = 2, Moves = 4,
+        },
+        {
+            Type = "UNIT_FIGHTER", Description = "TXT_KEY_UNIT_FIGHTER", Domain = "DOMAIN_AIR",
+            Combat = 0, RangedCombat = 0, Range = 8, Moves = 2,
+        },
     },
     Buildings = {
         { Type = "BUILDING_MONUMENT", Description = "TXT_KEY_BUILDING_MONUMENT" },
@@ -176,7 +200,6 @@ local DEFAULT_INFO_ROWS = {
     },
 }
 
--- GameInfoActions 的默认行。Type 就是任务类型名（WorldView/UnitPanel.lua:202 的用法）。
 local DEFAULT_ACTION_ROWS = {
     { Type = "MISSION_FORTIFY",                  SubType = "ACTIONSUBTYPE_MISSION", Visible = true },
     { Type = "MISSION_ALERT",                    SubType = "ACTIONSUBTYPE_MISSION", Visible = true },
@@ -186,12 +209,15 @@ local DEFAULT_ACTION_ROWS = {
 }
 
 -- -----------------------------------------------------------------------------
--- 第 2 节：小工具
+-- 第 2 节：基础工具函数
 -- -----------------------------------------------------------------------------
 
 -- -----------------------------------------------------------------------------
 -- 函数：keyOf(x, y)
--- 做什么：把坐标拼成 "x:y"，用作“按目标格配置的判定表”的键。
+-- 做什么：将坐标 (x, y) 拼装为 "x:y" 字符串键。
+-- 为什么：用于按目标坐标查表的判定配置与已探索地块集合键对齐。
+-- 输入：x, y（坐标数值）。
+-- 输出：字符串 "x:y"。
 -- -----------------------------------------------------------------------------
 local function keyOf(x, y)
     return tostring(x) .. ":" .. tostring(y)
@@ -200,35 +226,37 @@ S.keyOf = keyOf
 
 -- -----------------------------------------------------------------------------
 -- 函数：deepCopy(v)
--- 做什么：递归深拷贝普通表；函数与非表类型原样返回；带 _kind 的桩对象原样返回（保持身份）。
--- 为什么桩对象不拷贝：布置规格里若引用了一个单位对象（例如驻军），拷贝会得到另一个对象，
---     被测代码比较身份时就会出错。
+-- 做什么：递归深拷贝普通 Lua 表；对带 _kind 的桩对象及函数/基础类型保持原引用返回。
+-- 为什么：确保各世界与对象间不共享普通配置表，同时保留对象身份引用（如城市驻军单位）。
+-- 输入：v（任意 Lua 值）。
+-- 输出：拷贝结果。
 -- -----------------------------------------------------------------------------
 local function deepCopy(v)
     if type(v) ~= "table" or v._kind ~= nil then return v end
     local out = {}
-    for k, item in pairs(v) do out[k] = deepCopy(item) end
+    for k, item in pairs(v) do
+        out[k] = deepCopy(item)
+    end
     return out
 end
 
 -- -----------------------------------------------------------------------------
 -- 函数：normalizeNameList(names)
--- 做什么：把“一个方法名或一组方法名”统一成数组。
--- 输入：names，字符串或字符串数组。
--- 输出：字符串数组。
+-- 做什么：将单个方法名字符串或方法名数组统一规范为数组形式。
+-- 为什么：让 w:logOf / w:logCount / w:queriesOnInvisible 同时支持单字符串与数组传参。
+-- 输入：names（string 或 string[]）。
+-- 输出：string[]。
 -- -----------------------------------------------------------------------------
 local function normalizeNameList(names)
     if type(names) == "string" then return { names } end
-    return names
+    return names or {}
 end
 
 -- -----------------------------------------------------------------------------
 -- 函数：decide(value, self, key, ...)
--- 做什么：解析一个“可配置的判定结果”。判定字段允许三种写法：
---     布尔     直接返回；
---     函数     以 (self, ...) 调用，返回 true 才算真；
---     表       按目标键（"x:y"）查；表里的值还可以是函数。
--- 输入：value，规格里的判定字段；self，调用它的桩对象；key，目标键（没有目标时为 nil）。
+-- 做什么：求值可配置的桩判定字段（支持布尔值、函数回调、或按 "x:y" 索引的字典表）。
+-- 为什么：让测试用例能以最简洁的声明式写法模拟 CanRangeStrikeAt / CanMoveThrough 等判定。
+-- 输入：value（配置值）、self（调用者桩对象）、key（目标坐标键或 nil）、...（透传实参）。
 -- 输出：布尔值。
 -- -----------------------------------------------------------------------------
 local function decide(value, self, key, ...)
@@ -243,14 +271,9 @@ local function decide(value, self, key, ...)
 end
 
 -- -----------------------------------------------------------------------------
--- 第 3 节：枚举表与 GameDefines
+-- 第 3 节：全局枚举表与 GameDefines 管理
 -- -----------------------------------------------------------------------------
 
-for i, name in ipairs(ENDTURN_BLOCKING_NAMES) do
-    ENUMS.EndTurnBlockingTypes[name] = i - 1
-end
-
--- 枚举表作为全局常量只安装一次；GameDefines 每个世界重置一次
 DomainTypes = ENUMS.DomainTypes
 YieldTypes = ENUMS.YieldTypes
 ResourceUsageTypes = ENUMS.ResourceUsageTypes
@@ -259,10 +282,10 @@ EndTurnBlockingTypes = ENUMS.EndTurnBlockingTypes
 
 -- -----------------------------------------------------------------------------
 -- 函数：S.resetGameDefines(overrides)
--- 做什么：把全局 GameDefines 重置为默认值，再套用用例给的覆盖项。
--- 为什么复用同一张表：被测文件可能在文件顶层写 local X = GameDefines["X"]，把整张表捕获走了。
---     如果每个世界换一张新表，这种写法读到的是上一条用例的值。
--- 输入：overrides，可选的键值覆盖表。
+-- 做什么：原地重置全局表 GameDefines 为默认值，并叠加当前世界的覆盖项。
+-- 为什么：原地复用同一表引用，避免被测模块顶层缓存 GameDefines 表引用后读到旧用例数据。
+-- 输入：overrides（可选键值覆盖表）。
+-- 输出：nil。
 -- -----------------------------------------------------------------------------
 function S.resetGameDefines(overrides)
     GameDefines = GameDefines or {}
@@ -272,34 +295,49 @@ function S.resetGameDefines(overrides)
 end
 
 -- -----------------------------------------------------------------------------
--- 第 4 节：只读守卫
+-- 第 4 节：只读守卫与 DLL 避坑红线陷阱（A-03、A-05）
 -- -----------------------------------------------------------------------------
 
--- 守卫记录（跨用例累计，由 test_collector.lua 在每条用例结束时核对）
 S.guard = { violations = {}, missing = {} }
 
--- 写入类接口名单。前一组取自计划 WP2 第 4 点的名单，其余是同一类风险的补充。
+-- 显式写入类接口名单（对应 M1Sub1工作计划.md §2.1 纯只读红线）
 local WRITE_NAMES = {
-    -- 计划点名的
-    SetScriptData = true, SetRevealed = true,
-    CityPurchaseBuilding = true, CityPurchaseUnit = true, CityPushOrder = true,
+    SetScriptData = true,
+    SetRevealed = true,
+    CityPurchaseBuilding = true,
+    CityPurchaseUnit = true,
+    CityPurchaseProject = true,
+    CityPushOrder = true,
     SendCityBuyPlot = true,
-    HandleAction = true, DoControl = true,
-    SelectionListMove = true, SelectionListGameNetMessage = true,
-    ActivateNotification = true, RemoveNotification = true,
-    -- 同类补充
-    CityPurchaseProject = true, SelectedCitiesGameNetMessage = true,
+    HandleAction = true,
+    DoControl = true,
+    SelectionListMove = true,
+    SelectionListGameNetMessage = true,
+    SelectedCitiesGameNetMessage = true,
+    ActivateNotification = true,
+    RemoveNotification = true,
     PushMission = true,
 }
+
+-- 写入类方法名前缀模式
 local WRITE_PATTERNS = {
-    "^Set[A-Z]", "^Send[A-Z]", "^Push[A-Z]", "^Buy[A-Z]", "^Purchase[A-Z]",
-    "^Delete[A-Z]", "^Destroy[A-Z]", "^Kill[A-Z]", "^Disband[A-Z]", "^Found[A-Z]",
+    "^Set[A-Z]",
+    "^Send[A-Z]",
+    "^Push[A-Z]",
+    "^Buy[A-Z]",
+    "^Purchase[A-Z]",
+    "^Delete[A-Z]",
+    "^Destroy[A-Z]",
+    "^Kill[A-Z]",
+    "^Disband[A-Z]",
+    "^Found[A-Z]",
 }
 
 -- -----------------------------------------------------------------------------
 -- 函数：S.isWriteMethod(name)
--- 做什么：判断一个方法名是不是写入类接口（命中名单，或匹配 Set* 等前缀）。
--- 输入：name，方法名。
+-- 做什么：判定方法名是否属于禁止调用的写入类接口。
+-- 为什么：保障任何未显式实现的 Set*/Send* 等写入方法均自动落入只读守卫陷阱。
+-- 输入：name（方法名字符串）。
 -- 输出：布尔值。
 -- -----------------------------------------------------------------------------
 function S.isWriteMethod(name)
@@ -312,26 +350,30 @@ function S.isWriteMethod(name)
 end
 
 -- -----------------------------------------------------------------------------
--- 函数：makeTrap(ownerLabel, methodName)
--- 做什么：造一个“陷阱函数”：被调用时先把这次违规记进 S.guard.violations，再抛错。
--- 为什么先记录再抛错：被测代码可能用 pcall 把错误吞掉，记录不受 pcall 影响。
--- 输入：ownerLabel，接口所属对象的名字（如 "Game"、"Unit"）；methodName，方法名。
--- 输出：陷阱函数。
+-- 函数：makeTrap(ownerLabel, methodName, reasonPrefix)
+-- 做什么：构造守卫陷阱函数；被调用时先记入 S.guard.violations 再抛出错误。
+-- 为什么：先落账再抛错，即使被测代码用 pcall 吞掉异常，运行器依然能精准捕获违规。
+-- 输入：ownerLabel（对象名）、methodName（方法名）、reasonPrefix（可选报错前缀）。
+-- 输出：陷阱闭包函数。
 -- -----------------------------------------------------------------------------
-local function makeTrap(ownerLabel, methodName)
+local function makeTrap(ownerLabel, methodName, reasonPrefix)
+    local prefix = reasonPrefix or "[只读守卫] 被测代码禁止调用写入类接口 "
     return function(...)
-        table.insert(S.guard.violations, { owner = ownerLabel, method = methodName, args = { ... } })
-        error("[只读守卫] 被测代码调用了写入类接口 " .. ownerLabel .. "." .. methodName .. "()", 2)
+        table.insert(S.guard.violations, {
+            owner = ownerLabel,
+            method = methodName,
+            args = { ... },
+        })
+        error(prefix .. ownerLabel .. "." .. methodName .. "()", 2)
     end
 end
 
 -- -----------------------------------------------------------------------------
 -- 函数：makeMissing(ownerLabel, methodName)
--- 做什么：造一个“未实现”函数：桩没有实现这个方法，被调用时记录并抛错。
--- 为什么：桩没实现的方法，在真实引擎上要么不存在、要么行为未知。让它静静地返回 nil，
---     会把错误的调用方式带进正式代码；直接报错才能提醒把桩补齐。
--- 输入：ownerLabel，接口所属对象的名字；methodName，方法名。
--- 输出：未实现函数。
+-- 做什么：构造“桩未实现方法”占位函数；被调用时记入 S.guard.missing 并抛错。
+-- 为什么：禁止未实现的方法静默返回 nil 掩盖拼写错误或未核实的引擎调用。
+-- 输入：ownerLabel（对象名）、methodName（方法名）。
+-- 输出：错误闭包函数。
 -- -----------------------------------------------------------------------------
 local function makeMissing(ownerLabel, methodName)
     return function(...)
@@ -342,28 +384,31 @@ end
 
 -- -----------------------------------------------------------------------------
 -- 函数：unknownMember(ownerLabel, key)
--- 做什么：统一处理“访问桩没有定义的成员”：写入类给陷阱，其他给未实现函数。
--- 输入：ownerLabel，对象名；key，成员名。
--- 输出：陷阱函数或未实现函数。
+-- 做什么：统一分派未定义成员访问：命中写入规则返回陷阱，其余返回未实现报错函数。
+-- 输入：ownerLabel（对象名）、key（成员名）。
+-- 输出：闭包函数。
 -- -----------------------------------------------------------------------------
 local function unknownMember(ownerLabel, key)
-    if S.isWriteMethod(key) then return makeTrap(ownerLabel, key) end
+    if S.isWriteMethod(key) then
+        return makeTrap(ownerLabel, key)
+    end
     return makeMissing(ownerLabel, key)
 end
 
 -- -----------------------------------------------------------------------------
--- 第 5 节：include 垫片与调试输出
+-- 第 5 节：include 垫片与 print 输出捕获
 -- -----------------------------------------------------------------------------
 
--- include 记录：includeOrder 是首次加载的先后顺序，includeCount 是每个模块的加载次数
 S.includeOrder = {}
 S.includeCount = {}
+S.prints = {}
 
 -- -----------------------------------------------------------------------------
 -- 函数：S.hasModule(name)
--- 做什么：判断 mod/Lua/<name>.lua 是否存在，不加载。
--- 输入：name，模块名（不含扩展名）。
--- 输出：存在返回 true。
+-- 做什么：探测 mod/Lua/<name>.lua 文件是否存在，不编译也不执行。
+-- 为什么：供用例在早期工作包（如 WP1 尚未创建 CAB_InfoCollector.lua）时优雅 skip。
+-- 输入：name（模块名，不含 .lua 后缀）。
+-- 输出：布尔值。
 -- -----------------------------------------------------------------------------
 function S.hasModule(name)
     local src = __py_read_file("mod/Lua/" .. tostring(name) .. ".lua")
@@ -372,18 +417,21 @@ end
 
 -- -----------------------------------------------------------------------------
 -- 函数：include(name)
--- 做什么：垫片版的游戏 include：读取 mod/Lua/<name>.lua，编译后当作独立代码块执行，
---     并把模块名记进已加载名单。
--- 为什么由 Python 读文件：项目的绝对路径含空格和撇号，C 运行库打开它的行为不可控。
--- 输入：name，模块名。
--- 失败行为：文件不存在或编译失败时抛错（带模块名与错误信息），不静默忽略。
+-- 做什么：模拟 Civ5 VFS 的 include("<name>")，通过 Python 回调读取 mod/Lua/<name>.lua，
+--         以 Lua 5.1 loadstring 编译执行并记录加载次数与顺序。
+-- 为什么：项目路径包含空格与撇号，经 Python 读取可避免 C 运行库路径编码问题。
+-- 输入：name（模块名，可不带 .lua 扩展名）。
+-- 输出：nil（文件不存在或编译失败时直接抛错）。
 -- -----------------------------------------------------------------------------
 function include(name)
     local key = tostring(name)
+    if key:sub(-4) == ".lua" then
+        key = key:sub(1, -5)
+    end
     local relpath = "mod/Lua/" .. key .. ".lua"
     local src, err = __py_read_file(relpath)
     if not src then
-        error("include 垫片：读不到 " .. relpath .. "（" .. tostring(err) .. "）", 2)
+        error("include 垫片：无法读取 " .. relpath .. "（" .. tostring(err) .. "）", 2)
     end
     local chunk, compileErr = loadstring(src, "@" .. relpath)
     if not chunk then
@@ -397,12 +445,12 @@ function include(name)
     S.includeCount[key] = S.includeCount[key] + 1
 end
 
--- 被测代码的 print 输出收集到这里，用例失败时随错误信息一起显示
-S.prints = {}
-
 -- -----------------------------------------------------------------------------
 -- 函数：print(...)
--- 做什么：替换标准输出，把被测代码的日志收集到 S.prints，而不是刷到测试报告里。
+-- 做什么：接管全局 print，将被测模块日志收拢至 S.prints，仅在用例失败时附带展示。
+-- 为什么：保持测试报告输出洁净，同时不丢失失败现场诊断日志。
+-- 输入：...（任意打印参数）。
+-- 输出：nil。
 -- -----------------------------------------------------------------------------
 print = function(...)
     local parts = {}
@@ -413,14 +461,14 @@ print = function(...)
 end
 
 -- -----------------------------------------------------------------------------
--- 第 6 节：GameInfo 表视图
+-- 第 6 节：GameInfo 数据库表视图（0-based 索引 + #view + 迭代器 + 越界空表）
 -- -----------------------------------------------------------------------------
 
 -- -----------------------------------------------------------------------------
 -- 函数：copyRows(rows)
--- 做什么：把默认行模板复制成世界自己的行表。
--- 输入：rows，按 1 起下标排列的行模板数组。
--- 输出：{ [0]=行, [1]=行, …, n=行数 }，其中每行带 ID 列。
+-- 做什么：深拷贝默认行模板并按 0-based 顺序写入 ID 字段。
+-- 输入：rows（1-based 模板数组）。
+-- 输出：{ [0] = row0, ..., n = count }。
 -- -----------------------------------------------------------------------------
 local function copyRows(rows)
     local out = { n = 0 }
@@ -435,15 +483,11 @@ end
 
 -- -----------------------------------------------------------------------------
 -- 函数：newInfoView(getRows)
--- 做什么：造一个“数据库表视图”，模拟 GameInfo.<表> 与 GameInfoActions 的行为：
---     view[i]       按行号取行，行号从 0 起；越界返回空表（见文件头的依据与近似说明）；
---     view["Xxx"]   按行的 Type 列取行；找不到返回空表；
---     #view         返回行数；
---     view()        返回迭代器，供 for row in GameInfo.<表>() do 使用
---                   （先例：InGame/TopPanel.lua:190）。
--- 为什么用 userdata：标准 Lua 5.1 里，表的长度运算符不认 __len 元方法，userdata 才认。
--- 输入：getRows，返回当前行表的函数。行表可以随时增行，所以不直接捕获行表。
--- 输出：userdata 视图。
+-- 做什么：构造模拟 Civ5 GameInfo.<Table> / GameInfoActions 的 userdata 视图。
+-- 为什么用 newproxy(true)：标准 Lua 5.1 中只有 userdata 支持 __len 元方法，
+--         能精确还原官方惯用循环 `for i = 0, #GameInfoActions do` 的行为（含越界返回空表）。
+-- 输入：getRows（返回当前行表的闭包函数）。
+-- 输出：userdata 视图对象。
 -- -----------------------------------------------------------------------------
 local function newInfoView(getRows)
     local view = newproxy(true)
@@ -464,7 +508,9 @@ local function newInfoView(getRows)
         end
         return nil
     end
-    meta.__len = function() return getRows().n end
+    meta.__len = function()
+        return getRows().n
+    end
     meta.__call = function()
         local i = -1
         return function()
@@ -478,16 +524,15 @@ local function newInfoView(getRows)
 end
 
 -- -----------------------------------------------------------------------------
--- 第 7 节：六边形网格
+-- 第 7 节：六边形网格几何计算（Odd-r 奇数行右偏半格）
 -- -----------------------------------------------------------------------------
 
 -- -----------------------------------------------------------------------------
 -- 函数：S.hexDistance(x1, y1, x2, y2)
--- 做什么：计算两个网格坐标之间的六边形距离，网格按“奇数行右偏半格”摆放。
--- 怎么算：先把网格坐标换算成“立方坐标”（三个分量之和恒为 0），距离是三个分量差的
---     绝对值之和的一半。
--- 输入：两个格子的坐标（非负整数）。
--- 输出：非负整数距离；同一格为 0，相邻为 1。
+-- 做什么：计算 Civ5 奇数行右偏（odd-r）偏移坐标下两地块之间的六边形距离。
+-- 为什么：与 Map.PlotDistance 语义对齐，支撑半径盘扫描与近战/远程射程判定。
+-- 输入：x1, y1, x2, y2（整数坐标）。
+-- 输出：非负整数距离（同格 0，相邻 1）。
 -- -----------------------------------------------------------------------------
 function S.hexDistance(x1, y1, x2, y2)
     local ax = x1 - (y1 - (y1 % 2)) / 2
@@ -501,13 +546,13 @@ function S.hexDistance(x1, y1, x2, y2)
 end
 
 -- -----------------------------------------------------------------------------
--- 第 8 节：调用日志
+-- 第 8 节：调用日志与迷雾侧信道核查支持（F-03）
 -- -----------------------------------------------------------------------------
 
 -- -----------------------------------------------------------------------------
 -- 函数：S.describe(value)
--- 做什么：把日志里的参数值转成便于阅读的字符串。桩对象显示成“种类(归属:编号)”或“种类(坐标)”。
--- 输入：value，任意值。
+-- 做什么：将任意值或桩对象格式化为可读标签（如 unit(0:1)、plot(10,5)）。
+-- 输入：value（任意值）。
 -- 输出：描述字符串。
 -- -----------------------------------------------------------------------------
 function S.describe(value)
@@ -525,13 +570,11 @@ end
 
 -- -----------------------------------------------------------------------------
 -- 函数：S.record(w, entry)
--- 做什么：往世界的调用日志追加一条记录，并补上“目标格当时对参照队伍的可见性”。
--- 为什么记可见性：泄露回归（T-68）要断言“引擎判定从未以不可见格为目标被调用过”，
---     而用例事后无法重现调用那一刻的视野状态，所以必须在调用发生的那一刻记下来。
--- 参照队伍：主玩家（w.activePlayer）所在的队伍。
--- 输入：w，世界；entry，日志条目，含 name、args、self、plot（可为 nil）。
--- 输出：补全后的 entry。字段：x、y、revealed、visible（没有目标格时这四项为 nil）、
---     headUnit（调用那一刻的选中单位）。
+-- 做什么：向世界调用日志追加一条记录，并快照调用发生瞬间目标格对参照队伍的视野与敌城属性。
+-- 为什么：迷雾防侧信道红线 F-03 需要核查 CanRangeStrikeAt 是否仅作用于实时可见格或
+--         已探索敌对城市格，必须在调用瞬间记录 visible / revealed / isHostileCity。
+-- 输入：w（世界对象）、entry（日志表，含 name / args / self / plot 等）。
+-- 输出：补齐字段后的 entry。
 -- -----------------------------------------------------------------------------
 function S.record(w, entry)
     local plot = entry.plot
@@ -540,6 +583,17 @@ function S.record(w, entry)
         entry.x, entry.y = plot._s.x, plot._s.y
         entry.revealed = plot._s.revealed[team] == true
         entry.visible = plot._s.visible[team] == true
+        local city = plot._s.city
+        entry.hasCity = (city ~= nil)
+        local isHostileCity = false
+        if city ~= nil and city._s.owner ~= w.activePlayer then
+            local cityTeam = S.playerTeamOf(w, city._s.owner)
+            local myTeamObj = w.teams[team]
+            if myTeamObj ~= nil and myTeamObj._s.atWar[cityTeam] == true then
+                isHostileCity = true
+            end
+        end
+        entry.isHostileCity = isHostileCity
     end
     entry.headUnit = S.describe(w.ui.headUnit)
     entry.seq = #w.log + 1
@@ -548,29 +602,38 @@ function S.record(w, entry)
 end
 
 -- -----------------------------------------------------------------------------
--- 第 9 节：世界快照
+-- 第 9 节：深层世界快照与差异定位（A-03）
 -- -----------------------------------------------------------------------------
 
 -- -----------------------------------------------------------------------------
 -- 函数：sortedKeys(t)
--- 做什么：把表的键排成稳定顺序：数字键在前（从小到大），字符串键在后（字典序）。
--- 为什么：pairs 的遍历顺序不确定，快照要逐字节可比，必须先定序。
--- 输出：键的数组。
+-- 做什么：提取表的全部键并确定性排序（数字键升序在前，字符串键字典序在后）。
+-- 为什么：Lua pairs 顺序不确定，快照必须先定序才能逐字节精确比对。
+-- 输入：t（表）。
+-- 输出：有序键数组。
 -- -----------------------------------------------------------------------------
 local function sortedKeys(t)
     local numbers, strings = {}, {}
     for k in pairs(t) do
-        if type(k) == "number" then table.insert(numbers, k) else table.insert(strings, k) end
+        if type(k) == "number" then
+            table.insert(numbers, k)
+        else
+            table.insert(strings, k)
+        end
     end
     table.sort(numbers)
     table.sort(strings)
-    for _, s in ipairs(strings) do table.insert(numbers, s) end
+    for _, s in ipairs(strings) do
+        table.insert(numbers, s)
+    end
     return numbers
 end
 
 -- -----------------------------------------------------------------------------
 -- 函数：objTag(v)
--- 做什么：给桩对象生成“种类:身份”标签，快照用它代表对象引用，不深入对象内部。
+-- 做什么：为桩对象生成唯一身份标签，用于在嵌套引用处打断循环引用。
+-- 输入：v（桩对象）。
+-- 输出：身份标签字符串。
 -- -----------------------------------------------------------------------------
 local function objTag(v)
     if v._kind == "plot" then
@@ -584,10 +647,9 @@ end
 
 -- -----------------------------------------------------------------------------
 -- 函数：ser(v, seen)
--- 做什么：把一个值序列化成逐字节可比的规范字符串。
---     桩对象只记“种类与身份”，不深入内部；函数只记“是函数”。
--- 输入：v，任意值；seen，用于识别循环引用的表。
--- 输出：字符串。
+-- 做什么：将基础值或普通表序列化为确定性字符串；遇到嵌套桩对象时折叠为 objTag。
+-- 输入：v（任意值）、seen（防循环引用集合）。
+-- 输出：规范字符串。
 -- -----------------------------------------------------------------------------
 local function ser(v, seen)
     local kind = type(v)
@@ -614,39 +676,87 @@ local function ser(v, seen)
 end
 
 -- -----------------------------------------------------------------------------
+-- 函数：serEntity(entity, seen)
+-- 做什么：展开单个桩对象的内部状态表 _s 并序列化。
+-- 为什么：若直接把桩对象交给 ser() 会只输出 @tag 而漏检实体字段修改；
+--         顶层显式展开 _s、内部嵌套引用再用 objTag，兼顾完整检测与无循环引用。
+-- 输入：entity（带 _kind 与 _s 的桩对象）、seen（循环保护集合）。
+-- 输出：规范字符串。
+-- -----------------------------------------------------------------------------
+local function serEntity(entity, seen)
+    return objTag(entity) .. ":" .. ser(entity._s, seen)
+end
+
+-- -----------------------------------------------------------------------------
+-- 函数：serEntityMap(tbl, seen) / serEntityListMap(tbl, seen) / serPlots(plots, h, w, seen)
+-- 做什么：按确定顺序展开世界内队伍、玩家、单位、城市及全部地块的 _s 状态。
+-- 输入：容器表与 seen 集合。
+-- 输出：规范字符串。
+-- -----------------------------------------------------------------------------
+local function serEntityMap(tbl, seen)
+    local parts = {}
+    for _, k in ipairs(sortedKeys(tbl)) do
+        parts[#parts + 1] = ser(k, seen) .. "=" .. serEntity(tbl[k], seen)
+    end
+    return "{" .. table.concat(parts, ",") .. "}"
+end
+
+local function serEntityListMap(tbl, seen)
+    local parts = {}
+    for _, ownerID in ipairs(sortedKeys(tbl)) do
+        local list = tbl[ownerID]
+        local items = {}
+        for i = 1, #list do
+            items[i] = serEntity(list[i], seen)
+        end
+        parts[#parts + 1] = ser(ownerID, seen) .. "=[" .. table.concat(items, ",") .. "]"
+    end
+    return "{" .. table.concat(parts, ",") .. "}"
+end
+
+local function serPlots(plots, height, width, seen)
+    local parts = {}
+    for y = 0, height - 1 do
+        local row = plots[y]
+        for x = 0, width - 1 do
+            parts[#parts + 1] = serEntity(row[x], seen)
+        end
+    end
+    return "[" .. table.concat(parts, ",") .. "]"
+end
+
+-- -----------------------------------------------------------------------------
 -- 函数：S.snapshot(w)
--- 做什么：把世界的全部状态拍成一张规范字符串快照。
---     范围：回合号、GameDefines、GameInfo 行、队伍与交战关系、玩家、单位、城市、全部地块。
---     不含界面状态（当前选中）——原地动作探测允许短暂切换选中（计划 §3.3 的 P-3）。
--- 输入：w，世界。
--- 输出：字符串。
+-- 做什么：对世界全部持久游戏状态（不含 UI 选中态与惰性 deadPlayers 缓存）拍规范快照。
+-- 为什么：验证被测只读模块执行前后未篡改任何引擎或世界状态（A-03）。
+-- 输入：w（世界对象）。
+-- 输出：可逐字节比对的快照字符串。
 -- -----------------------------------------------------------------------------
 function S.snapshot(w)
     local seen = {}
-    local parts = {}
-    local function add(label, value)
-        parts[#parts + 1] = label .. "=" .. ser(value, seen)
-    end
-    add("turn", w.turn)
-    add("busy", w.processingMessages)
-    add("active", w.activePlayer)
-    add("defines", GameDefines)
-    add("info", w.info)
-    add("actions", w.actionRows)
-    add("teams", w.teams)
-    add("players", w.players)
-    add("units", w.unitsByPlayer)
-    add("cities", w.citiesByPlayer)
-    add("plots", w.plots)
+    local parts = {
+        "turn=" .. ser(w.turn, seen),
+        "busy=" .. ser(w.processingMessages, seen),
+        "active=" .. ser(w.activePlayer, seen),
+        "defines=" .. ser(GameDefines, seen),
+        "info=" .. ser(w.info, seen),
+        "actions=" .. ser(w.actionRows, seen),
+        "nilSlots=" .. ser(w.nilPlayerSlots, seen),
+        "teams=" .. serEntityMap(w.teams, seen),
+        "players=" .. serEntityMap(w.players, seen),
+        "units=" .. serEntityListMap(w.unitsByPlayer, seen),
+        "cities=" .. serEntityListMap(w.citiesByPlayer, seen),
+        "plots=" .. serPlots(w.plots, w.height, w.width, seen),
+    }
     return table.concat(parts, "|")
 end
 
 -- -----------------------------------------------------------------------------
--- 函数：S.touch(w)
--- 做什么：登记“这个世界被读过了”。若还没有基线快照，就在此刻拍一张。
---     基线 = 最后一次布置之后、第一次被读之前的状态。采集模块是先读后写的才可能有危害，
---     而任何写入要么走守卫（当场被拦），要么发生在第一次读之后（快照会变），所以这个基线够用。
--- 输入：w，世界；可为 nil。
+-- 函数：S.touch(w) / dirty(w)
+-- 做什么：S.touch 在世界首次被读取前自动拍下基线快照；dirty 在布置变更时作废基线。
+-- 为什么：确保基线永远对应“场景布置完成、被测代码首次读取前”的干净状态。
+-- 输入：w（世界对象，可为 nil）。
+-- 输出：nil。
 -- -----------------------------------------------------------------------------
 function S.touch(w)
     if w ~= nil and w._snapshot == nil then
@@ -654,20 +764,15 @@ function S.touch(w)
     end
 end
 
--- -----------------------------------------------------------------------------
--- 函数：dirty(w)
--- 做什么：作废基线快照。每次布置操作前后各调用一次，保证下一次读之前会重拍。
--- 输入：w，世界；可为 nil。
--- -----------------------------------------------------------------------------
 local function dirty(w)
     if w ~= nil then w._snapshot = nil end
 end
 
 -- -----------------------------------------------------------------------------
 -- 函数：S.firstDiff(a, b)
--- 做什么：找出两个字符串第一处不同的位置，返回该处附近的片段，便于定位是哪一项变了。
--- 输入：a，基线；b，现状。
--- 输出：形如 “…基线片段… => …现状片段…” 的字符串。
+-- 做什么：定位两张快照首个不同字符并返回前后上下文片段，便于快速排障。
+-- 输入：a（基线快照）、b（当前快照）。
+-- 输出：形如 "…基线片段…  =>  …现状片段…" 的对比字符串。
 -- -----------------------------------------------------------------------------
 function S.firstDiff(a, b)
     local limit = math.min(#a, #b)
@@ -684,17 +789,16 @@ function S.firstDiff(a, b)
 end
 
 -- -----------------------------------------------------------------------------
--- 第 10 节：布置规格的填写工具
+-- 第 10 节：对象规格校验与字段清单
 -- -----------------------------------------------------------------------------
 
--- “没有缺省值”的标记：字段可以设置，不设置就是 nil
 local NONE = {}
 
 -- -----------------------------------------------------------------------------
 -- 函数：fieldSet(names, defaults)
--- 做什么：由字段名清单造出“字段 → 缺省值”的规格表。
--- 为什么字段名用清单而不是表：缺省值为 nil 的字段写不进表字面量，清单不会有这个遗漏。
--- 输入：names，允许设置的字段名数组；defaults，带缺省值的字段的表。
+-- 做什么：构建“允许字段名 -> 默认值（或 NONE 哨兵）”规格表。
+-- 为什么：允许显式声明缺省为 nil 的字段，同时在 fillDefaults 时拒绝拼写错误的未知键。
+-- 输入：names（字段名数组）、defaults（默认值映射）。
 -- 输出：规格表。
 -- -----------------------------------------------------------------------------
 local function fieldSet(names, defaults)
@@ -711,12 +815,9 @@ end
 
 -- -----------------------------------------------------------------------------
 -- 函数：fillDefaults(spec, fields, label)
--- 做什么：按规格表铺缺省值，再用布置规格里的同名字段覆盖。
---     表类型的值一律复制一份（桩对象除外），避免不同对象共用同一个表。
--- 失败行为：规格里出现规格表之外的字段时抛错。
---     为什么：拼错的字段名如果被静默忽略，用例会以为设置生效了，测试就成了假通过。
--- 输入：spec，布置规格（可为 nil）；fields，fieldSet 造出的规格表；label，用在报错信息里。
--- 输出：状态表。
+-- 做什么：按规格表填充默认值并应用用户覆盖；若 spec 含未知字段立即抛错。
+-- 输入：spec（用户输入表或 nil）、fields（规格表）、label（报错提示前缀）。
+-- 输出：填充完成的状态表。
 -- -----------------------------------------------------------------------------
 local function fillDefaults(spec, fields, label)
     local s = {}
@@ -728,18 +829,33 @@ local function fillDefaults(spec, fields, label)
     end
     for name, value in pairs(spec or {}) do
         if fields[name] == nil then
-            error("布置规格里有未知字段 " .. label .. "." .. tostring(name), 3)
+            error("布置规格包含未知字段 " .. label .. "." .. tostring(name), 3)
         end
-        if type(value) == "table" and value._kind == nil then value = deepCopy(value) end
+        if type(value) == "table" and value._kind == nil then
+            value = deepCopy(value)
+        end
         s[name] = value
     end
     return s
 end
 
 -- -----------------------------------------------------------------------------
--- 第 11 节：各类对象的字段清单
--- 这里列出的字段，就是用例可以设置的全部字段（计划 §10.2 的最小能力）。
+-- 函数：applyPatch(targetState, patch, fields, label)
+-- 做什么：校验并将部分字段更新应用到已有实体状态表（供 IGE 场景变更助手使用）。
+-- 输入：targetState（实体 _s 表）、patch（待更新键值）、fields（规格表）、label（报错前缀）。
+-- 输出：nil。
 -- -----------------------------------------------------------------------------
+local function applyPatch(targetState, patch, fields, label)
+    for name, value in pairs(patch or {}) do
+        if fields[name] == nil then
+            error("状态补丁包含未知字段 " .. label .. "." .. tostring(name), 3)
+        end
+        if type(value) == "table" and value._kind == nil then
+            value = deepCopy(value)
+        end
+        targetState[name] = value
+    end
+end
 
 local TEAM_FIELDS = fieldSet({ "id", "atWar" }, { atWar = {} })
 
@@ -757,25 +873,21 @@ local PLAYER_FIELDS = fieldSet({
     blockingType = -1, blockingNotificationIndex = -1, notifications = {},
 })
 
--- 判定类字段（canRangeStrike 等）的写法见 decide：布尔、函数或按目标键查的表。
--- moves / maxMoves 的单位是“原始移动力点数”，与 MovesLeft() / MaxMoves() 的返回值一致。
 local UNIT_FIELDS = fieldSet({
     "id", "owner", "unitType", "x", "y", "nameKey",
     "domain", "damage", "maxHp", "moves", "maxMoves",
     "combat", "rangedCombat", "range",
     "fortifyTurns", "readyToMove", "promotionReady", "automated", "delayedDeath", "dead",
     "isCombat", "embarked", "invisibleTo",
-    "canRangeStrike", "canRangeStrikeAt", "canMoveThrough", "canAttack", "canHeal",
+    "canRangeStrike", "canRangeStrikeAt", "canMoveThrough", "canAttack", "canFortify", "canHeal",
     "mustSetUp", "everFortifyable", "canHandleActions",
 }, {
     damage = 0, fortifyTurns = 0, promotionReady = false, automated = false, delayedDeath = false,
     dead = false, embarked = false, invisibleTo = {},
     canRangeStrike = false, canRangeStrikeAt = false, canMoveThrough = false,
-    canHeal = false, mustSetUp = false, canHandleActions = {},
+    canFortify = false, canHeal = false, mustSetUp = false, canHandleActions = {},
 })
 
--- costs 的四个子表：unitGold / unitFaith / bldGold / bldFaith，键是单位或建筑的行号。
--- purchasable 与 affordable 的写法：{ units = { [行号] = { gold = true, faith = true } }, buildings = { … } }。
 local CITY_FIELDS = fieldSet({
     "id", "owner", "name", "x", "y", "pop", "damage", "maxHp", "strength",
     "isCapital", "isPuppet", "isOccupied", "isResistance", "isRazing",
@@ -812,59 +924,49 @@ local PLOT_FIELDS = fieldSet({
 })
 
 -- -----------------------------------------------------------------------------
--- 第 12 节：地块与单位的方法表（签名逐一对照计划 §9.1）
--- 每个方法的写法上方标了官方先例；路径前缀同计划 §9.1（E2/ = Expansion2/UI/InGame/）。
+-- 第 11 节：Plot / Unit / City / Player / Team 方法表
 -- -----------------------------------------------------------------------------
 
 local PlotMethods = {}
 
--- 坐标与视野（E2/CityView/CityView.lua:2001-2002；E2/PlotHelpManager.lua:125、:130）
 PlotMethods.GetX = function(p) return p._s.x end
 PlotMethods.GetY = function(p) return p._s.y end
 PlotMethods.IsRevealed = function(p, team) return p._s.revealed[team] == true end
 PlotMethods.IsVisible = function(p, team) return p._s.visible[team] == true end
 
--- 格上单位，下标从 0 起（E2/PlotMouseoverInclude.lua:298-301）
 PlotMethods.GetNumUnits = function(p) return #p._s.units end
 PlotMethods.GetUnit = function(p, index)
     if type(index) ~= "number" then return nil end
     return p._s.units[index + 1]
 end
 
--- 归属与城市（E2/CityView/CityView.lua:2031；E2/PlotMouseoverInclude.lua:380-382）
 PlotMethods.GetOwner = function(p) return p._s.owner end
 PlotMethods.GetPlotCity = function(p) return p._s.city end
 PlotMethods.IsCity = function(p) return p._s.city ~= nil end
 
--- 地形、地貌、丘陵、河流、山地
--- （E2/PlotMouseoverInclude.lua:153、:87、:161、:172、:125）
 PlotMethods.GetTerrainType = function(p) return p._s.terrain end
 PlotMethods.GetFeatureType = function(p) return p._s.feature end
 PlotMethods.IsHills = function(p) return p._s.hills == true end
 PlotMethods.IsRiver = function(p) return p._s.river == true end
 PlotMethods.IsMountain = function(p) return p._s.mountain == true end
 
--- 水域与通行（E2/CityView/CityView.lua:2086；Gameplay/Lua/MapGenerator.lua:618）
 PlotMethods.IsWater = function(p)
     local row = p._w.info.Terrains[p._s.terrain]
     return row ~= nil and row.water == true
 end
 PlotMethods.IsImpassable = function(p) return p._s.impassable == true end
-
--- 战斗动画中（E2/WorldView/WorldView.lua:418）
 PlotMethods.IsFighting = function(p) return p._s.fighting == true end
 
--- 改良与资源（E2/WorldView/UnitPanel.lua:1452；E2/PlotMouseoverInclude.lua:215-216）
--- GetResourceType 的参数是队伍 ID，对该队伍尚未探明时返回负值。
 PlotMethods.GetImprovementType = function(p) return p._s.improvement end
+-- F-06：传入 activeTeam 时仅返回该队伍已解锁科技的资源；若未解锁返回 -1
 PlotMethods.GetResourceType = function(p, team)
     local known = p._s.resourceKnownBy
     if known == false then return -1 end
-    if known == nil or known[team] == true then return p._s.resource end
+    if known == nil then return p._s.resource end
+    if type(known) == "table" and known[team] == true then return p._s.resource end
     return -1
 end
 
--- 官方右键闸门（E2/WorldView/WorldView.lua:692）。两者的精确语义未知，见文件头的近似说明。
 PlotMethods.IsVisibleEnemyUnit = function(p, ePlayer)
     S.record(p._w, { name = "IsVisibleEnemyUnit", args = { ePlayer }, plot = p })
     if p._s.isVisibleEnemyUnit ~= nil then
@@ -879,6 +981,7 @@ PlotMethods.IsVisibleEnemyUnit = function(p, ePlayer)
     end
     return false
 end
+
 PlotMethods.IsEnemyCity = function(p, pUnit)
     S.record(p._w, { name = "IsEnemyCity", args = { pUnit }, plot = p })
     if p._s.isEnemyCity ~= nil then
@@ -893,11 +996,8 @@ end
 
 local UnitMethods = {}
 
--- 标识与归属（E2/UnitList.lua:116；E2/UnitFlagManager.lua:318、:86；E2/WorldView/UnitPanel.lua:425；
--- E2/PlotMouseoverInclude.lua:313；E2/UnitFlagManager.lua:206；E2/InGame.lua:466）
 UnitMethods.GetID = function(u) return u._s.id end
 UnitMethods.GetUnitType = function(u) return u._s.unitType end
--- GetName 返回的是文本键，要经 Locale.ConvertTextKey 转换
 UnitMethods.GetName = function(u) return u._s.nameKey end
 UnitMethods.GetDomainType = function(u) return u._s.domain end
 UnitMethods.GetOwner = function(u) return u._s.owner end
@@ -905,22 +1005,17 @@ UnitMethods.GetPlot = function(u) return u._w:getPlot(u._s.x, u._s.y) end
 UnitMethods.GetX = function(u) return u._s.x end
 UnitMethods.GetY = function(u) return u._s.y end
 
--- 血量与移动力（E2/PlotMouseoverInclude.lua:349；E2/UnitFlagManager.lua:387；
--- E2/WorldView/UnitPanel.lua:152、:639、:641）。MovesLeft / MaxMoves 返回原始移动力点数。
 UnitMethods.GetDamage = function(u) return u._s.damage end
 UnitMethods.GetCurrHitPoints = function(u) return u._s.maxHp - u._s.damage end
 UnitMethods.GetMaxHitPoints = function(u) return u._s.maxHp end
 UnitMethods.MovesLeft = function(u) return u._s.moves end
 UnitMethods.MaxMoves = function(u) return u._s.maxMoves end
 
--- 战力与射程（E2/Popups/MilitaryOverview.lua:258、:265；E2/WorldView/UnitPanel.lua:626）
 UnitMethods.GetBaseCombatStrength = function(u) return u._s.combat end
 UnitMethods.GetBaseRangedCombatStrength = function(u) return u._s.rangedCombat end
 UnitMethods.Range = function(u) return u._s.range end
 
--- 状态（E2/UnitList.lua:178；E2/WorldView/ActionInfoPanel.lua:539、:142；E2/UnitFlagManager.lua:649）
 UnitMethods.GetFortifyTurns = function(u) return u._s.fortifyTurns end
--- 不设置 readyToMove 时按“还有移动力”推导
 UnitMethods.IsReadyToMove = function(u)
     if u._s.readyToMove ~= nil then return u._s.readyToMove == true end
     return u._s.moves > 0
@@ -930,12 +1025,10 @@ UnitMethods.IsAutomated = function(u) return u._s.automated == true end
 UnitMethods.IsDelayedDeath = function(u) return u._s.delayedDeath == true end
 UnitMethods.IsDead = function(u) return u._s.dead == true end
 
--- 类别与隐形（E2/UnitFlagManager.lua:83；E2/PlotMouseoverInclude.lua:302）
 UnitMethods.IsCombatUnit = function(u) return u._s.isCombat == true end
 UnitMethods.IsEmbarked = function(u) return u._s.embarked == true end
 UnitMethods.IsInvisible = function(u, team) return u._s.invisibleTo[team] == true end
 
--- 射程攻击（UI/InGame/Bombardment.lua:33；E2/WorldView/WorldView.lua:423、:471）
 UnitMethods.CanRangeStrike = function(u) return decide(u._s.canRangeStrike, u, nil) end
 UnitMethods.CanRangeStrikeAt = function(u, x, y, ...)
     local w = u._w
@@ -945,19 +1038,21 @@ UnitMethods.CanRangeStrikeAt = function(u, x, y, ...)
     return decide(u._s.canRangeStrikeAt, u, keyOf(x, y), x, y, ...)
 end
 
--- 攻击与架设（DLC/Expansion/Tutorial/lua/TutorialChecks.lua:1233、:2358）
 UnitMethods.IsCanAttack = function(u)
     if u._s.canAttack ~= nil then return u._s.canAttack == true end
     return u._s.isCombat == true and u._s.moves > 0
 end
 UnitMethods.IsMustSetUpToRangedAttack = function(u) return u._s.mustSetUp == true end
-
--- 驻扎、休整与移动（E2/WorldView/UnitPanel.lua:1122；TutorialChecks.lua:552；CanMoveThrough 见计划 §9.4）
 UnitMethods.IsEverFortifyable = function(u)
     if u._s.everFortifyable ~= nil then return u._s.everFortifyable == true end
     return u._s.isCombat == true
 end
 UnitMethods.IsHurt = function(u) return u._s.damage > 0 end
+UnitMethods.CanFortify = function(u, pPlot)
+    local key = nil
+    if pPlot ~= nil and pPlot._kind == "plot" then key = keyOf(pPlot._s.x, pPlot._s.y) end
+    return decide(u._s.canFortify, u, key, pPlot)
+end
 UnitMethods.CanHeal = function(u, pPlot)
     local key = nil
     if pPlot ~= nil and pPlot._kind == "plot" then key = keyOf(pPlot._s.x, pPlot._s.y) end
@@ -970,10 +1065,15 @@ UnitMethods.CanMoveThrough = function(u, pPlot)
     return decide(u._s.canMoveThrough, u, keyOf(pPlot._s.x, pPlot._s.y), pPlot)
 end
 
+-- A-05 红线：原版 BNW DLL 硬编码返回 false，严禁被测代码调用
+UnitMethods.CanMoveOrAttackInto = makeTrap(
+    "Unit",
+    "CanMoveOrAttackInto",
+    "[引擎避坑红线] 严禁调用原版 DLL 缺陷方法 "
+)
+
 local CityMethods = {}
 
--- 标识与属性（E2/Popups/EconomicGeneralInfo.lua:670、:79、:112、:95、:73；E2/Popups/ProductionPopup.lua:304）
--- GetStrengthValue 返回的是 100 倍的城防值
 CityMethods.GetID = function(c) return c._s.id end
 CityMethods.GetName = function(c) return c._s.name end
 CityMethods.GetPopulation = function(c) return c._s.pop end
@@ -983,15 +1083,12 @@ CityMethods.GetMaxHitPoints = function(c) return c._s.maxHp end
 CityMethods.GetDamage = function(c) return c._s.damage end
 CityMethods.GetStrengthValue = function(c) return c._s.strength end
 
--- 状态（E2/Popups/EconomicGeneralInfo.lua:82、:85、:88；E2/CityBannerManager.lua:278、:270）
 CityMethods.IsCapital = function(c) return c._s.isCapital == true end
 CityMethods.IsPuppet = function(c) return c._s.isPuppet == true end
 CityMethods.IsOccupied = function(c) return c._s.isOccupied == true end
 CityMethods.IsResistance = function(c) return c._s.isResistance == true end
 CityMethods.IsRazing = function(c) return c._s.isRazing == true end
 
--- 归属与地块（E2/Popups/EconomicGeneralInfo.lua:634；E2/WorldView/EnemyUnitPanel.lua:2163；
--- UI/InGame/Bombardment.lua:27；E2/CityView/CityView.lua:2025-2026；E2/CityBannerManager.lua:331）
 CityMethods.GetOwner = function(c) return c._s.owner end
 CityMethods.GetTeam = function(c) return S.playerTeamOf(c._w, c._s.owner) end
 CityMethods.Plot = function(c) return c._w:getPlot(c._s.x, c._s.y) end
@@ -1004,16 +1101,12 @@ CityMethods.GetCityIndexPlot = function(c, index)
 end
 CityMethods.GetGarrisonedUnit = function(c) return c._s.garrison end
 
--- 生产（E2/Popups/ProductionPopup.lua:222；E2/CityBannerManager.lua:371、:373、:422）
 CityMethods.GetOrderQueueLength = function(c) return c._s.orderQueueLength end
 CityMethods.IsProduction = function(c) return c._s.isProduction == true end
 CityMethods.IsProductionProcess = function(c) return c._s.isProductionProcess == true end
 CityMethods.GetProductionTurnsLeft = function(c) return c._s.productionTurnsLeft end
--- GetProductionNameKey 返回的是文本键
 CityMethods.GetProductionNameKey = function(c) return c._s.productionNameKey end
 
--- 产出（E2/Popups/ProductionPopup.lua:289-293、:302-303；E2/Popups/EconomicGeneralInfo.lua:587、:120、:137-140；
--- E2/CityView/CityView.lua:862-873）
 CityMethods.GetYieldRate = function(c, yieldType) return c._s.yields[yieldType] or 0 end
 CityMethods.GetProductionModifier = function(c) return c._s.productionModifier end
 CityMethods.FoodDifference = function(c) return c._s.foodNet end
@@ -1022,14 +1115,12 @@ CityMethods.GetFaithPerTurn = function(c) return c._s.faithPerTurn end
 CityMethods.GetFood = function(c) return c._s.foodStore end
 CityMethods.GrowthThreshold = function(c) return c._s.growthThreshold end
 CityMethods.GetFoodTurnsLeft = function(c) return c._s.foodTurnsLeft end
--- IsFoodProduction 为真表示城市正在生产“避免增长”
 CityMethods.IsFoodProduction = function(c) return c._s.foodGrowthBlocked == true end
 CityMethods.FoodDifferenceTimes100 = function(c)
     if c._s.foodDiffTimes100 ~= nil then return c._s.foodDiffTimes100 end
     return c._s.foodNet * 100
 end
 
--- 城防炮击（E2/CityBannerManager.lua:37；UI/InGame/Bombardment.lua:24、:287；E2/WorldView/WorldView.lua:518）
 CityMethods.CanRangeStrike = function(c) return decide(c._s.canRangeStrike, c, nil) end
 CityMethods.CanRangeStrikeNow = function(c)
     local w = c._w
@@ -1044,9 +1135,13 @@ CityMethods.CanRangeStrikeAt = function(c, x, y, ...)
     return decide(c._s.canRangeStrikeAt, c, keyOf(x, y), x, y, ...)
 end
 
--- 购买（E2/Popups/ProductionPopup.lua:428、:432、:436、:449、:453、:457、:563、:571、:575、:593、:601、:605）
--- 官方只用两种参数组合：(false, false, …) 查“规则上能不能买”，(true, true, …) 查“现在买不买得起”。
--- 返回 nil 表示这组参数不在桩的模型里（例如查项目），调用处按假处理。
+-- -----------------------------------------------------------------------------
+-- 函数：purchasePoolEntry(city, bTestVisible, bTestCost, unitID, buildingID, eYield)
+-- 做什么：模拟官方 ProductionPopup.lua 双层 IsCanPurchase 判定：
+--         (false, false, ...) 查规则候选池；(true, true, ...) 查当前是否买得起/不冲突。
+-- 输入：同 City:IsCanPurchase 参数（不含 projectID）。
+-- 输出：布尔值或 nil（未知参数组合）。
+-- -----------------------------------------------------------------------------
 local function purchasePoolEntry(city, bTestVisible, bTestCost, unitID, buildingID, eYield)
     local pool
     if bTestVisible == false and bTestCost == false then
@@ -1056,15 +1151,20 @@ local function purchasePoolEntry(city, bTestVisible, bTestCost, unitID, building
     else
         return nil
     end
+    if pool == nil then return false end
     local currency = nil
-    if eYield == YieldTypes.YIELD_GOLD then currency = "gold"
-    elseif eYield == YieldTypes.YIELD_FAITH then currency = "faith" end
+    if eYield == YieldTypes.YIELD_GOLD then
+        currency = "gold"
+    elseif eYield == YieldTypes.YIELD_FAITH then
+        currency = "faith"
+    end
     if currency == nil then return nil end
+
     local entry = nil
     if unitID ~= nil and unitID >= 0 then
-        entry = pool.units[unitID]
+        entry = pool.units and pool.units[unitID]
     elseif buildingID ~= nil and buildingID >= 0 then
-        entry = pool.buildings[buildingID]
+        entry = pool.buildings and pool.buildings[buildingID]
     end
     if entry == nil then return false end
     return entry[currency] == true
@@ -1075,12 +1175,19 @@ CityMethods.IsCanPurchase = function(c, bTestVisible, bTestCost, unitID, buildin
     if result == nil then return false end
     return result
 end
-CityMethods.GetUnitPurchaseCost = function(c, unitID) return c._s.costs.unitGold[unitID] end
-CityMethods.GetUnitFaithPurchaseCost = function(c, unitID) return c._s.costs.unitFaith[unitID] end
-CityMethods.GetBuildingPurchaseCost = function(c, buildingID) return c._s.costs.bldGold[buildingID] end
-CityMethods.GetBuildingFaithPurchaseCost = function(c, buildingID) return c._s.costs.bldFaith[buildingID] end
+CityMethods.GetUnitPurchaseCost = function(c, unitID)
+    return (c._s.costs and c._s.costs.unitGold and c._s.costs.unitGold[unitID]) or 0
+end
+CityMethods.GetUnitFaithPurchaseCost = function(c, unitID)
+    return (c._s.costs and c._s.costs.unitFaith and c._s.costs.unitFaith[unitID]) or 0
+end
+CityMethods.GetBuildingPurchaseCost = function(c, buildingID)
+    return (c._s.costs and c._s.costs.bldGold and c._s.costs.bldGold[buildingID]) or 0
+end
+CityMethods.GetBuildingFaithPurchaseCost = function(c, buildingID)
+    return (c._s.costs and c._s.costs.bldFaith and c._s.costs.bldFaith[buildingID]) or 0
+end
 
--- 买地（E2/CityView/CityView.lua:2143、:2146）。CanBuyPlotAt 的第三个参数为真表示忽略金币只看规则。
 CityMethods.CanBuyPlotAt = function(c, x, y, ignoreCost)
     local key = keyOf(x, y)
     if ignoreCost == true then return c._s.canBuyPlotAt[key] == true end
@@ -1088,14 +1195,10 @@ CityMethods.CanBuyPlotAt = function(c, x, y, ignoreCost)
     return c._s.canBuyPlotNow[key] == true
 end
 CityMethods.GetBuyPlotCost = function(c, x, y) return c._s.buyPlotCost[keyOf(x, y)] or 0 end
-
--- 真实建造的建筑数量（计划 §9.4：IGE/Panels/IGE_CitiesPanel.lua:151）
 CityMethods.GetNumRealBuilding = function(c, buildingID) return c._s.realBuildings[buildingID] or 0 end
 
 local PlayerMethods = {}
 
--- 归属与存活（E2/TopPanel.lua:11；E2/WorldView/ActionInfoPanel.lua:100；E2/PlotMouseoverInclude.lua:54；
--- UI/InGame/TurnProcessing.lua:60；E2/DiploList.lua:313；E2/Popups/CultureOverview.lua:1290）
 PlayerMethods.GetTeam = function(p) return p._s.team end
 PlayerMethods.IsTurnActive = function(p) return p._s.turnActive == true end
 PlayerMethods.IsAlive = function(p) return p._s.alive == true end
@@ -1104,7 +1207,6 @@ PlayerMethods.IsBarbarian = function(p) return p._s.barbarian == true end
 PlayerMethods.GetName = function(p) return p._s.name end
 PlayerMethods.GetCivilizationShortDescription = function(p) return p._s.civ end
 
--- 经济（E2/TopPanel.lua:62-63、:34、:151、:173、:96；E2/WorldView/EnemyUnitPanel.lua:470）
 PlayerMethods.GetGold = function(p) return p._s.gold end
 PlayerMethods.CalculateGoldRate = function(p) return p._s.goldRate end
 PlayerMethods.GetScience = function(p) return p._s.science end
@@ -1114,11 +1216,9 @@ PlayerMethods.GetTotalFaithPerTurn = function(p) return p._s.faithPerTurn end
 PlayerMethods.GetExcessHappiness = function(p) return p._s.happiness end
 PlayerMethods.IsGoldenAge = function(p) return p._s.goldenAge == true end
 
--- 资源（E2/TopPanel.lua:203；E2/Popups/HappinessInfo.lua:637）
 PlayerMethods.GetNumResourceAvailable = function(p, resourceID) return p._s.resourcesAvailable[resourceID] or 0 end
 PlayerMethods.GetNumResourceTotal = function(p, resourceID) return p._s.resourcesTotal[resourceID] or 0 end
 
--- 按创建顺序遍历单位与城市（E2/UnitList.lua:113；E2/Popups/EconomicGeneralInfo.lua:66）
 PlayerMethods.Units = function(p)
     local list = p._w.unitsByPlayer[p._s.id]
     local i = 0
@@ -1138,7 +1238,6 @@ PlayerMethods.Cities = function(p)
     end
 end
 
--- 按编号取单位与城市（E2/UnitFlagManager.lua:81；E2/Popups/ProductionPopup.lua:73）
 PlayerMethods.GetUnitByID = function(p, unitID)
     for u in p:Units() do
         if u._s.id == unitID then return u end
@@ -1152,11 +1251,9 @@ PlayerMethods.GetCityByID = function(p, cityID)
     return nil
 end
 
--- 回合阻塞与通知（E2/WorldView/ActionInfoPanel.lua:117-118、:399-403、:154）
 PlayerMethods.GetEndTurnBlockingType = function(p) return p._s.blockingType end
 PlayerMethods.GetEndTurnBlockingNotificationIndex = function(p) return p._s.blockingNotificationIndex end
 PlayerMethods.GetNumNotifications = function(p) return #p._s.notifications end
--- GetNotificationIndex(i) 的参数是通知在列表里的下标（从 0 起），返回的是通知的编号
 PlayerMethods.GetNotificationIndex = function(p, index)
     local item = p._s.notifications[index + 1]
     if item == nil then return -1 end
@@ -1172,7 +1269,6 @@ PlayerMethods.GetNotificationStr = function(p, index)
     if item == nil then return "" end
     return item.str
 end
--- 可能返回已自动化的单位（ActionInfoPanel.lua:536 的官方注释）
 PlayerMethods.GetFirstReadyUnit = function(p)
     for u in p:Units() do
         if (not u._s.dead) and u:IsReadyToMove() then return u end
@@ -1182,19 +1278,17 @@ end
 
 local TeamMethods = {}
 
--- 交战关系（E2/CityBannerManager.lua:213）
 TeamMethods.IsAtWar = function(t, otherTeam) return t._s.atWar[otherTeam] == true end
 
 -- -----------------------------------------------------------------------------
--- 第 13 节：方法表的包装
+-- 第 12 节：对象元表包装（自动触发 S.touch 与只读守卫）
 -- -----------------------------------------------------------------------------
 
 -- -----------------------------------------------------------------------------
 -- 函数：makeObjectMeta(methodTable, ownerLabel)
--- 做什么：把一张原始方法表变成桩对象的元表。每个读方法被包一层：调用时先登记“被读过”
---     （见 S.touch），再转给原方法。方法表里没有的名字走 unknownMember。
--- 输入：methodTable，原始方法表；ownerLabel，对象名，用在守卫的报错信息里。
--- 输出：元表（只含 __index）。
+-- 做什么：将方法表包装为桩对象元表：每次读方法调用前先触发 S.touch，未知成员走守卫。
+-- 输入：methodTable（方法表）、ownerLabel（对象名称）。
+-- 输出：元表。
 -- -----------------------------------------------------------------------------
 local function makeObjectMeta(methodTable, ownerLabel)
     local wrapped = {}
@@ -1220,14 +1314,14 @@ local PlayerMT = makeObjectMeta(PlayerMethods, "Player")
 local TeamMT = makeObjectMeta(TeamMethods, "Team")
 
 -- -----------------------------------------------------------------------------
--- 第 14 节：全局引擎对象的安装
+-- 第 13 节：全局引擎对象构造与安装
 -- -----------------------------------------------------------------------------
 
 -- -----------------------------------------------------------------------------
 -- 函数：S.playerTeamOf(w, playerID)
--- 做什么：取玩家所在的队伍。
--- 输入：w，世界；playerID，玩家编号。
--- 输出：队伍编号；玩家不存在时返回 -1。
+-- 做什么：查询指定玩家所属队伍 ID，不存在返回 -1。
+-- 输入：w（世界对象）、playerID（玩家编号）。
+-- 输出：队伍 ID（整数）。
 -- -----------------------------------------------------------------------------
 function S.playerTeamOf(w, playerID)
     local p = w.players[playerID]
@@ -1237,9 +1331,9 @@ end
 
 -- -----------------------------------------------------------------------------
 -- 函数：S.visionTeamOf(w)
--- 做什么：取调用日志的参照队伍——主玩家（w.activePlayer）所在的队伍。
--- 输入：w，世界。
--- 输出：队伍编号。
+-- 做什么：返回当前世界激活玩家（w.activePlayer）的队伍 ID，作为调用日志参照视野队伍。
+-- 输入：w（世界对象）。
+-- 输出：队伍 ID（整数）。
 -- -----------------------------------------------------------------------------
 function S.visionTeamOf(w)
     return S.playerTeamOf(w, w.activePlayer)
@@ -1247,12 +1341,9 @@ end
 
 -- -----------------------------------------------------------------------------
 -- 函数：S.toLocale(key, ...)
--- 做什么：模拟 Locale 的文本转换。
---     用例用 w:addText 登记过的键返回登记的文本；
---     没登记的 TXT_KEY_ 键返回带尖括号的键名（带参数时一并拼上），便于断言“经过了转换”；
---     不是 TXT_KEY 开头的字符串原样返回。
--- 输入：key，文本键；…，格式参数。
--- 输出：字符串。
+-- 做什么：模拟 Locale.ConvertTextKey / Lookup；已登记键返回文本，未登记 TXT_KEY_ 键包尖括号。
+-- 输入：key（字符串键）、...（可选格式化参数）。
+-- 输出：转换后字符串。
 -- -----------------------------------------------------------------------------
 function S.toLocale(key, ...)
     if type(key) ~= "string" then return key end
@@ -1269,8 +1360,9 @@ end
 
 -- -----------------------------------------------------------------------------
 -- 函数：rebuildGameInfoTypes(w)
--- 做什么：由当前世界的全部行重建全局表 GameInfoTypes（Type 名 → 行号）。
--- 复用同一张表：理由同 S.resetGameDefines。
+-- 做什么：按当前世界的全部 GameInfo 与 GameInfoActions 行原地刷新全局 GameInfoTypes。
+-- 输入：w（世界对象）。
+-- 输出：nil。
 -- -----------------------------------------------------------------------------
 local function rebuildGameInfoTypes(w)
     GameInfoTypes = GameInfoTypes or {}
@@ -1287,24 +1379,31 @@ end
 
 -- -----------------------------------------------------------------------------
 -- 函数：makePlayers(w)
--- 做什么：造全局表 Players。范围内（0 .. MAX_PLAYERS-1）的槽位恒返回对象：
---     参战的槽位返回用例创建过的玩家；没参战的槽位当场造一个“死玩家”，缓存在世界里。
---     越界返回 nil。
--- 为什么先查参战玩家：被测代码可能先遍历过玩家表（把死玩家造了出来），
---     之后用例再 addPlayer 时，必须让活玩家生效。
+-- 做什么：构造全局 Players 表，支持存活玩家、未参战死玩家、越界 nil 与显式 nil 槽位。
+-- 为什么：覆盖 M1Sub1工作计划.md §2.3 要求的三种槽位形态兼容性验证。
+-- 输入：w（世界对象）。
+-- 输出：Players 代理表。
 -- -----------------------------------------------------------------------------
 local function makePlayers(w)
     return setmetatable({}, {
         __index = function(_, index)
-            local valid = (type(index) == "number" and index >= 0 and index == math.floor(index)
-                and index < GameDefines.MAX_PLAYERS)
+            local valid = (
+                type(index) == "number"
+                and index >= 0
+                and index == math.floor(index)
+                and index < GameDefines.MAX_PLAYERS
+            )
             if not valid then return nil end
+            if w.nilPlayerSlots[index] then return nil end
             local player = w.players[index]
             if player ~= nil then return player end
             local dead = w.deadPlayers[index]
             if dead == nil then
                 local spec = { id = index, alive = false, team = -1, name = "" }
-                dead = setmetatable({ _kind = "player", _w = w, _s = fillDefaults(spec, PLAYER_FIELDS, "player") }, PlayerMT)
+                dead = setmetatable(
+                    { _kind = "player", _w = w, _s = fillDefaults(spec, PLAYER_FIELDS, "player") },
+                    PlayerMT
+                )
                 w.deadPlayers[index] = dead
             end
             return dead
@@ -1314,7 +1413,9 @@ end
 
 -- -----------------------------------------------------------------------------
 -- 函数：makeTeams(w)
--- 做什么：造全局表 Teams。队伍不存在时返回 nil（官方与原型都先判 nil）。
+-- 做什么：构造全局 Teams 表，不存在的队伍编号返回 nil。
+-- 输入：w（世界对象）。
+-- 输出：Teams 代理表。
 -- -----------------------------------------------------------------------------
 local function makeTeams(w)
     return setmetatable({}, {
@@ -1329,9 +1430,9 @@ end
 
 -- -----------------------------------------------------------------------------
 -- 函数：makeMap(w)
--- 做什么：造全局表 Map。
---     GetPlotXY(x, y, dx, dy) 等价于 GetPlot(x+dx, y+dy)，越界返回 nil；
---     PlotDistance 用桩的六边形距离；不模拟地图卷绕。
+-- 做什么：构造全局 Map 对象（GetPlot / GetPlotXY / PlotDistance / GetNumPlots / GetPlotByIndex / GetGridSize）。
+-- 输入：w（世界对象）。
+-- 输出：Map 代理表。
 -- -----------------------------------------------------------------------------
 local function makeMap(w)
     local map = {
@@ -1368,9 +1469,10 @@ end
 
 -- -----------------------------------------------------------------------------
 -- 函数：makeUI(w)
--- 做什么：造全局表 UI。
---     SelectUnit 与 ClearSelectionList 是计划 §3.3 允许的唯一例外：只改变桩的选中状态，
---     并把每次调用记进日志，供用例断言选中保护（P-1 至 P-4）的调用次数。
+-- 做什么：构造全局 UI 对象；放行临时选区探测例外 SelectUnit / ClearSelectionList 并记日志；
+--         禁止 UI.SetInterfaceMode 等写入方法（走 unknownMember 触发只读守卫）。
+-- 输入：w（世界对象）。
+-- 输出：UI 代理表。
 -- -----------------------------------------------------------------------------
 local function makeUI(w)
     local ui = {
@@ -1404,9 +1506,9 @@ end
 
 -- -----------------------------------------------------------------------------
 -- 函数：makeGame(w)
--- 做什么：造全局表 Game。
---     CanHandleAction 隐式作用于“当前选中的单位”：按该单位的 canHandleActions 判定，
---     没有选中单位、单位已死、动作不存在时都返回假。
+-- 做什么：构造全局 Game 对象；CanHandleAction 基于当前 UI.GetHeadSelectedUnit 判定并记日志。
+-- 输入：w（世界对象）。
+-- 输出：Game 代理表。
 -- -----------------------------------------------------------------------------
 local function makeGame(w)
     local game = {
@@ -1449,8 +1551,9 @@ end
 
 -- -----------------------------------------------------------------------------
 -- 函数：makeGameInfo(w)
--- 做什么：造全局表 GameInfo。每个表名对应一个表视图（见 newInfoView），首次访问时创建。
---     世界里没有的表名走 unknownMember：拼错表名不会悄悄得到一张空表。
+-- 做什么：构造全局 GameInfo 代理表，按需为每张已知表创建 userdata 视图；未知表名走守卫。
+-- 输入：w（世界对象）。
+-- 输出：GameInfo 代理表。
 -- -----------------------------------------------------------------------------
 local function makeGameInfo(w)
     local views = {}
@@ -1469,8 +1572,9 @@ end
 
 -- -----------------------------------------------------------------------------
 -- 函数：makeWriteOnlyObject(label)
--- 做什么：造一个“没有任何读接口”的全局对象（Network、Events、Modding）。
---     采集模块不该碰它们；一旦访问任何成员，就会得到陷阱或未实现函数。
+-- 做什么：构造纯禁入全局对象（Network / Events / Modding），任何成员访问均走守卫。
+-- 输入：label（对象名）。
+-- 输出：代理表。
 -- -----------------------------------------------------------------------------
 local function makeWriteOnlyObject(label)
     return setmetatable({}, { __index = function(_, key) return unknownMember(label, key) end })
@@ -1478,7 +1582,9 @@ end
 
 -- -----------------------------------------------------------------------------
 -- 函数：installGlobals(w)
--- 做什么：把世界对应的全部引擎全局对象装进全局环境。每建一个新世界就整体换一套。
+-- 做什么：将指定世界对应的全部引擎全局对象安装到 _G。
+-- 输入：w（世界对象）。
+-- 输出：nil。
 -- -----------------------------------------------------------------------------
 local function installGlobals(w)
     Players = makePlayers(w)
@@ -1506,9 +1612,7 @@ local function installGlobals(w)
 end
 
 -- -----------------------------------------------------------------------------
--- 第 15 节：世界构建器
--- 每个布置方法在开头和结尾各作废一次基线快照（dirty）：开头一次是为了让方法内部
--- 若调用了读方法，不会把半成品状态拍成基线；结尾一次是保证下一次读之前按最终状态重拍。
+-- 第 14 节：合成世界构建器与 IGE 实时变阵助手
 -- -----------------------------------------------------------------------------
 
 local WorldMethods = {}
@@ -1516,10 +1620,9 @@ local WorldMT = { __index = WorldMethods }
 
 -- -----------------------------------------------------------------------------
 -- 函数：newPlot(w, x, y)
--- 做什么：造一个地块，默认是草地、无地貌、未探索。全图只有草地一种地形，
---     其余地形由用例通过 setPlot 设置。
--- 输入：w，世界；x、y，坐标。
--- 输出：地块对象。
+-- 做什么：初始化单个默认草地、未探索地块对象。
+-- 输入：w（世界对象）、x, y（整数坐标）。
+-- 输出：Plot 桩对象。
 -- -----------------------------------------------------------------------------
 local function newPlot(w, x, y)
     local s = {
@@ -1535,10 +1638,9 @@ end
 
 -- -----------------------------------------------------------------------------
 -- 函数：resolveType(w, tableName, value)
--- 做什么：把布置规格里的类型写法统一成行号：数字原样返回，字符串按 Type 列查行。
--- 失败行为：Type 名不存在时抛错，提示是哪张表。
--- 输入：w，世界；tableName，GameInfo 的表名；value，Type 名或行号。
--- 输出：行号。
+-- 做什么：将 Type 字符串或整数 ID 统一解析为 0-based 行号；找不到立即抛错。
+-- 输入：w（世界对象）、tableName（GameInfo 表名）、value（Type 或 ID）。
+-- 输出：整数行号。
 -- -----------------------------------------------------------------------------
 local function resolveType(w, tableName, value)
     if type(value) == "number" then return value end
@@ -1548,22 +1650,37 @@ local function resolveType(w, tableName, value)
             if rows[i].Type == value then return i end
         end
     end
-    error("GameInfo." .. tableName .. " 里没有 Type=" .. tostring(value), 3)
+    error("GameInfo." .. tableName .. " 中不存在 Type=" .. tostring(value), 3)
 end
 
 -- -----------------------------------------------------------------------------
 -- 函数：override(target, key, value)
--- 做什么：value 不为 nil 时才覆盖 target[key]，用于 setPlot 的“只改给出来的字段”。
+-- 做什么：仅当 value ~= nil 时覆盖 target[key]。
+-- 输入：target（目标表）、key（键名）、value（新值或 nil）。
+-- 输出：nil。
 -- -----------------------------------------------------------------------------
 local function override(target, key, value)
     if value ~= nil then target[key] = value end
 end
 
 -- -----------------------------------------------------------------------------
--- 函数：w:getPlot(x, y)
--- 做什么：取地块。
--- 输入：x、y，坐标。
--- 输出：地块对象；坐标不是数字或越界时返回 nil。
+-- 函数：assertOwnerAlive(w, owner, label)
+-- 做什么：校验单位/城市所属玩家存在且存活，防止用例布置出隐形失效实体。
+-- 输入：w（世界对象）、owner（玩家 ID）、label（报错前缀）。
+-- 输出：nil。
+-- -----------------------------------------------------------------------------
+local function assertOwnerAlive(w, owner, label)
+    local player = w.players[owner]
+    if player == nil or not player._s.alive then
+        error(label .. "：玩家 " .. tostring(owner) .. " 不存在或已死亡，请先调用 addPlayer", 3)
+    end
+end
+
+-- -----------------------------------------------------------------------------
+-- 函数：WorldMethods:getPlot(x, y)
+-- 做什么：按坐标获取地块对象，非法或越界返回 nil。
+-- 输入：x, y（坐标）。
+-- 输出：Plot 对象或 nil。
 -- -----------------------------------------------------------------------------
 function WorldMethods:getPlot(x, y)
     if type(x) ~= "number" or type(y) ~= "number" then return nil end
@@ -1573,26 +1690,21 @@ function WorldMethods:getPlot(x, y)
 end
 
 -- -----------------------------------------------------------------------------
--- 函数：w:addTeam(spec)
--- 做什么：创建一个队伍。
--- 输入：spec，{ id = 队伍编号, atWar = { [对方队伍] = true } }。
--- 输出：队伍对象。
+-- 函数：WorldMethods:addTeam(spec) / ensureTeam(teamID) / atWar(teamA, teamB, flag)
+-- 做什么：创建队伍并配置对称的交战关系。
+-- 输入：spec（队伍规格）或队伍 ID 与布尔标记。
+-- 输出：addTeam / ensureTeam 返回 Team 桩对象。
 -- -----------------------------------------------------------------------------
 function WorldMethods:addTeam(spec)
     dirty(self)
     local s = fillDefaults(spec, TEAM_FIELDS, "team")
-    if s.id == nil then error("addTeam 必须给出 id", 2) end
+    if s.id == nil then error("addTeam 必须提供 id", 2) end
     local team = setmetatable({ _kind = "team", _w = self, _s = s }, TeamMT)
     self.teams[s.id] = team
     dirty(self)
     return team
 end
 
--- -----------------------------------------------------------------------------
--- 函数：w:ensureTeam(teamID)
--- 做什么：取队伍，不存在就创建（真实游戏里每个玩家都有自己的队伍）。
--- 输出：队伍对象。
--- -----------------------------------------------------------------------------
 function WorldMethods:ensureTeam(teamID)
     local team = self.teams[teamID]
     if team == nil then
@@ -1601,11 +1713,6 @@ function WorldMethods:ensureTeam(teamID)
     return team
 end
 
--- -----------------------------------------------------------------------------
--- 函数：w:atWar(teamA, teamB, flag)
--- 做什么：设置两个队伍是否交战，双方对称记录。
--- 输入：teamA、teamB，队伍编号；flag，可省略，默认为真。
--- -----------------------------------------------------------------------------
 function WorldMethods:atWar(teamA, teamB, flag)
     dirty(self)
     if flag == nil then flag = true end
@@ -1617,10 +1724,10 @@ function WorldMethods:atWar(teamA, teamB, flag)
 end
 
 -- -----------------------------------------------------------------------------
--- 函数：w:addPlayer(spec)
--- 做什么：创建一个玩家，并保证它的队伍存在。可设置的字段见 PLAYER_FIELDS。
--- 输入：spec，玩家规格。省略 id 时从 0 起自动分配。
--- 输出：玩家对象。
+-- 函数：WorldMethods:addPlayer(spec) / setPlayer(playerID, patch) / setNilPlayerSlot(playerID, flag)
+-- 做什么：添加玩家、实时修改玩家属性（IGE 场景）、或将指定槽位标记为显式 nil。
+-- 输入：spec / playerID / patch / flag。
+-- 输出：addPlayer / setPlayer 返回 Player 桩对象。
 -- -----------------------------------------------------------------------------
 function WorldMethods:addPlayer(spec)
     dirty(self)
@@ -1629,6 +1736,7 @@ function WorldMethods:addPlayer(spec)
         s.id = self.nextPlayerID
         self.nextPlayerID = self.nextPlayerID + 1
     end
+    self.nilPlayerSlots[s.id] = nil
     local player = setmetatable({ _kind = "player", _w = self, _s = s }, PlayerMT)
     self.players[s.id] = player
     if s.alive then self:ensureTeam(s.team) end
@@ -1636,39 +1744,42 @@ function WorldMethods:addPlayer(spec)
     return player
 end
 
--- -----------------------------------------------------------------------------
--- 函数：assertOwnerAlive(w, owner, label)
--- 做什么：确认一个单位或城市的拥有者是参战玩家。
--- 为什么：拥有者不是存活玩家时，扫描类接口遍历“其他存活玩家”时根本看不到这个单位或城市，
---     用例会以为布置成功而实际没有。直接报错比静默无效好。
--- 输入：w，世界；owner，玩家编号；label，用在报错信息里。
--- -----------------------------------------------------------------------------
-local function assertOwnerAlive(w, owner, label)
-    local player = w.players[owner]
-    if player == nil or not player._s.alive then
-        error(label .. "：玩家 " .. tostring(owner) .. " 不存在或已死亡，请先 addPlayer", 3)
+function WorldMethods:setPlayer(playerID, patch)
+    dirty(self)
+    local player = self.players[playerID]
+    if player == nil then
+        error("setPlayer：玩家 " .. tostring(playerID) .. " 不存在", 2)
     end
+    applyPatch(player._s, patch, PLAYER_FIELDS, "player")
+    if player._s.alive then self:ensureTeam(player._s.team) end
+    dirty(self)
+    return player
+end
+
+function WorldMethods:setNilPlayerSlot(playerID, flag)
+    dirty(self)
+    if flag == nil then flag = true end
+    self.nilPlayerSlots[playerID] = flag or nil
+    dirty(self)
 end
 
 -- -----------------------------------------------------------------------------
--- 函数：w:addUnit(spec)
--- 做什么：创建一个单位并放到地图上，同时登记到拥有者的单位表与所在格的单位表。
---     可设置的字段见 UNIT_FIELDS。没给的字段按单位类型所在行推导：名称键、域、战力、射程、
---     最大移动力；isCombat 按“有战力”推导。
--- 输入：spec，单位规格，必须给出 owner、unitType、x、y。省略 id 时按拥有者从 0 起分配。
--- 输出：单位对象。
+-- 函数：WorldMethods:addUnit(spec) / setUnit(unit, patch)
+-- 做什么：创建单位放到地图与玩家列表，或在 IGE 场景中动态修改单位属性（含坐标迁移）。
+-- 输入：spec（单位规格）或 unit + patch。
+-- 输出：Unit 桩对象。
 -- -----------------------------------------------------------------------------
 function WorldMethods:addUnit(spec)
     dirty(self)
     local s = fillDefaults(spec, UNIT_FIELDS, "unit")
-    if s.owner == nil then error("addUnit 必须给出 owner", 2) end
+    if s.owner == nil then error("addUnit 必须提供 owner", 2) end
     assertOwnerAlive(self, s.owner, "addUnit")
-    if s.x == nil or s.y == nil then error("addUnit 必须给出 x、y", 2) end
+    if s.x == nil or s.y == nil then error("addUnit 必须提供 x、y", 2) end
     local plot = self:getPlot(s.x, s.y)
     if plot == nil then
         error("addUnit：坐标越界 (" .. tostring(s.x) .. "," .. tostring(s.y) .. ")", 2)
     end
-    if s.unitType == nil then error("addUnit 必须给出 unitType", 2) end
+    if s.unitType == nil then error("addUnit 必须提供 unitType", 2) end
     s.unitType = resolveType(self, "Units", s.unitType)
     local row = self.info.Units[s.unitType]
 
@@ -1692,7 +1803,7 @@ function WorldMethods:addUnit(spec)
     end
     for _, existing in ipairs(owned) do
         if existing._s.id == s.id then
-            error("addUnit：玩家 " .. tostring(s.owner) .. " 已经有编号为 " .. tostring(s.id) .. " 的单位", 2)
+            error("addUnit：玩家 " .. tostring(s.owner) .. " 已存在编号 " .. tostring(s.id) .. " 的单位", 2)
         end
     end
     self.nextUnitID[s.owner] = math.max(self.nextUnitID[s.owner] or 0, s.id + 1)
@@ -1704,26 +1815,50 @@ function WorldMethods:addUnit(spec)
     return unit
 end
 
+function WorldMethods:setUnit(unit, patch)
+    dirty(self)
+    if unit == nil or unit._kind ~= "unit" then
+        error("setUnit：首个参数必须是单位桩对象", 2)
+    end
+    local oldX, oldY = unit._s.x, unit._s.y
+    applyPatch(unit._s, patch, UNIT_FIELDS, "unit")
+    if unit._s.x ~= oldX or unit._s.y ~= oldY then
+        local newPlot = self:getPlot(unit._s.x, unit._s.y)
+        if newPlot == nil then
+            error("setUnit：新坐标越界 (" .. tostring(unit._s.x) .. "," .. tostring(unit._s.y) .. ")", 2)
+        end
+        local oldPlot = self:getPlot(oldX, oldY)
+        if oldPlot ~= nil then
+            for i = #oldPlot._s.units, 1, -1 do
+                if oldPlot._s.units[i] == unit then
+                    table.remove(oldPlot._s.units, i)
+                end
+            end
+        end
+        table.insert(newPlot._s.units, unit)
+    end
+    dirty(self)
+    return unit
+end
+
 -- -----------------------------------------------------------------------------
--- 函数：w:addCity(spec)
--- 做什么：创建一座城市并放到地图上，同时登记到拥有者的城市表与所在格。
---     可设置的字段见 CITY_FIELDS。省略 name 时用 "城市编号"；省略 cityPlots 时只有中心格。
---     城市中心格若还没有归属，就归城市拥有者（真实游戏如此）。
--- 输入：spec，城市规格，必须给出 owner、x、y。省略 id 时按拥有者从 0 起分配。
--- 输出：城市对象。
+-- 函数：WorldMethods:addCity(spec) / setCity(city, patch)
+-- 做什么：创建城市放到地图与玩家列表，或在 IGE 场景中实时修改城市属性。
+-- 输入：spec（城市规格）或 city + patch。
+-- 输出：City 桩对象。
 -- -----------------------------------------------------------------------------
 function WorldMethods:addCity(spec)
     dirty(self)
     local s = fillDefaults(spec, CITY_FIELDS, "city")
-    if s.owner == nil then error("addCity 必须给出 owner", 2) end
+    if s.owner == nil then error("addCity 必须提供 owner", 2) end
     assertOwnerAlive(self, s.owner, "addCity")
-    if s.x == nil or s.y == nil then error("addCity 必须给出 x、y", 2) end
+    if s.x == nil or s.y == nil then error("addCity 必须提供 x、y", 2) end
     local plot = self:getPlot(s.x, s.y)
     if plot == nil then
         error("addCity：坐标越界 (" .. tostring(s.x) .. "," .. tostring(s.y) .. ")", 2)
     end
     if plot._s.city ~= nil then
-        error("addCity：格 (" .. tostring(s.x) .. "," .. tostring(s.y) .. ") 上已经有一座城市", 2)
+        error("addCity：坐标 (" .. tostring(s.x) .. "," .. tostring(s.y) .. ") 已有城市", 2)
     end
 
     local owned = self.citiesByPlayer[s.owner]
@@ -1736,7 +1871,7 @@ function WorldMethods:addCity(spec)
     end
     for _, existing in ipairs(owned) do
         if existing._s.id == s.id then
-            error("addCity：玩家 " .. tostring(s.owner) .. " 已经有编号为 " .. tostring(s.id) .. " 的城市", 2)
+            error("addCity：玩家 " .. tostring(s.owner) .. " 已存在编号 " .. tostring(s.id) .. " 的城市", 2)
         end
     end
     self.nextCityID[s.owner] = math.max(self.nextCityID[s.owner] or 0, s.id + 1)
@@ -1753,13 +1888,21 @@ function WorldMethods:addCity(spec)
     return city
 end
 
+function WorldMethods:setCity(city, patch)
+    dirty(self)
+    if city == nil or city._kind ~= "city" then
+        error("setCity：首个参数必须是城市桩对象", 2)
+    end
+    applyPatch(city._s, patch, CITY_FIELDS, "city")
+    dirty(self)
+    return city
+end
+
 -- -----------------------------------------------------------------------------
--- 函数：w:setPlot(x, y, spec)
--- 做什么：修改一个地块的属性，只改规格里给出来的字段。可设置的字段见 PLOT_FIELDS。
---     地形、地貌、改良、资源可以写 Type 名或行号；地貌、改良、资源写 false 表示“没有”。
---     revealed 与 visible 是 { [队伍] = 真/假 }，按队伍设置视野。
--- 输入：x、y，坐标；spec，地块规格。
--- 输出：地块对象。
+-- 函数：WorldMethods:setPlot(x, y, spec)
+-- 做什么：修改指定地块的属性（仅覆盖 spec 中给出的字段）。
+-- 输入：x, y（坐标）、spec（地块规格表）。
+-- 输出：Plot 桩对象。
 -- -----------------------------------------------------------------------------
 function WorldMethods:setPlot(x, y, spec)
     dirty(self)
@@ -1799,10 +1942,10 @@ function WorldMethods:setPlot(x, y, spec)
 end
 
 -- -----------------------------------------------------------------------------
--- 函数：w:show(team, x, y, flag)
--- 做什么：设置地块对某队伍“当前可见”。可见必然已探索，所以同时置为已探索。
--- 输入：team，队伍编号；x、y，坐标；flag，可省略，默认为真；为假时只取消可见。
--- 坐标越界时静默忽略，便于成片设置。
+-- 函数：WorldMethods:show / reveal / unreveal / revealAll / showAll / unrevealAll
+-- 做什么：按队伍设置单格或全图的实时可见与已探索状态（保证可见蕴含已探索、未探索必不可见）。
+-- 输入：team（队伍 ID）、x, y（坐标）、flag（可选布尔值，默认 true）。
+-- 输出：nil。
 -- -----------------------------------------------------------------------------
 function WorldMethods:show(team, x, y, flag)
     dirty(self)
@@ -1815,11 +1958,6 @@ function WorldMethods:show(team, x, y, flag)
     dirty(self)
 end
 
--- -----------------------------------------------------------------------------
--- 函数：w:reveal(team, x, y, flag)
--- 做什么：设置地块对某队伍“已探索”。flag 为假表示改成未探索，此时必然不可见。
--- 输入：同 w:show。只调用它（不调用 w:show）得到的正是“已探索但被迷雾覆盖”的格子。
--- -----------------------------------------------------------------------------
 function WorldMethods:reveal(team, x, y, flag)
     dirty(self)
     if flag == nil then flag = true end
@@ -1831,18 +1969,10 @@ function WorldMethods:reveal(team, x, y, flag)
     dirty(self)
 end
 
--- -----------------------------------------------------------------------------
--- 函数：w:unreveal(team, x, y)
--- 做什么：把地块对某队伍改成未探索（黑雾）。
--- -----------------------------------------------------------------------------
 function WorldMethods:unreveal(team, x, y)
     self:reveal(team, x, y, false)
 end
 
--- -----------------------------------------------------------------------------
--- 函数：w:revealAll(team) / w:showAll(team) / w:unrevealAll(team)
--- 做什么：对全图一次性设置视野：全部已探索（迷雾）、全部可见、全部未探索。
--- -----------------------------------------------------------------------------
 function WorldMethods:revealAll(team)
     for y = 0, self.height - 1 do
         for x = 0, self.width - 1 do
@@ -1868,9 +1998,8 @@ function WorldMethods:unrevealAll(team)
 end
 
 -- -----------------------------------------------------------------------------
--- 函数：w:select(unit) / w:clearSelection() / w:setInterfaceMode(mode)
--- 做什么：直接布置界面状态（当前选中的单位、界面模式），不写调用日志。
---     这是用例在“摆场景”，不是被测代码的调用。界面状态不进世界快照。
+-- 函数：WorldMethods:select / clearSelection / setInterfaceMode
+-- 做什么：布置初始 UI 状态，不写入调用日志，也不进入世界持久快照。
 -- -----------------------------------------------------------------------------
 function WorldMethods:select(unit)
     self.ui.headUnit = unit
@@ -1885,10 +2014,8 @@ function WorldMethods:setInterfaceMode(mode)
 end
 
 -- -----------------------------------------------------------------------------
--- 函数：w:addInfoRow(tableName, row)
--- 做什么：给世界的一张 GameInfo 表追加一行（表不存在就新建），并刷新 GameInfoTypes。
--- 输入：tableName，表名（如 "Units"、"Projects"）；row，行，必须带 Type 列。
--- 输出：新行的行号。
+-- 函数：WorldMethods:addInfoRow / addAction / addText
+-- 做什么：向当前世界的 GameInfo 表、GameInfoActions 或本地化表追加条目并刷新 GameInfoTypes。
 -- -----------------------------------------------------------------------------
 function WorldMethods:addInfoRow(tableName, row)
     dirty(self)
@@ -1906,12 +2033,6 @@ function WorldMethods:addInfoRow(tableName, row)
     return copy.ID
 end
 
--- -----------------------------------------------------------------------------
--- 函数：w:addAction(row)
--- 做什么：给 GameInfoActions 追加一行（动作）。默认已有驻扎、警戒、休整、跳过、架设五个动作。
--- 输入：row，动作行，必须带 Type 列，如 { Type = "MISSION_SLEEP", Visible = true }。
--- 输出：新动作的行号。
--- -----------------------------------------------------------------------------
 function WorldMethods:addAction(row)
     dirty(self)
     local copy = deepCopy(row)
@@ -1923,18 +2044,13 @@ function WorldMethods:addAction(row)
     return copy.ID
 end
 
--- -----------------------------------------------------------------------------
--- 函数：w:addText(key, text)
--- 做什么：登记一条界面文本，模拟本地化表。Locale 转换这个键时会返回登记的文本。
--- -----------------------------------------------------------------------------
 function WorldMethods:addText(key, text)
     self.texts[key] = text
 end
 
 -- -----------------------------------------------------------------------------
--- 函数：w:unit(owner, id) / w:city(owner, id)
--- 做什么：按拥有者与编号取单位或城市对象，供布置规格之间互相引用（例如驻军）。
--- 输出：对象；找不到时返回 nil。
+-- 函数：WorldMethods:unit(owner, id) / city(owner, id)
+-- 做什么：按归属玩家与编号查找已创建的单位或城市桩对象。
 -- -----------------------------------------------------------------------------
 function WorldMethods:unit(owner, id)
     local list = self.unitsByPlayer[owner]
@@ -1955,10 +2071,16 @@ function WorldMethods:city(owner, id)
 end
 
 -- -----------------------------------------------------------------------------
--- 函数：w:logOf(names)
--- 做什么：取出指定方法名的全部调用日志，按调用先后排列。
--- 输入：names，一个方法名或一组方法名，如 "CanMoveThrough" 或 { "CanMoveThrough", "CanRangeStrikeAt" }。
--- 输出：日志条目的数组。每条的字段见 S.record，另有 name、self、args。
+-- 函数：WorldMethods:logOf / logCount / queriesOnInvisible / queriesOutOfBounds /
+--       queriesOnForbiddenFog / clearLog
+-- 做什么：查询与筛选世界调用日志。
+-- 为什么区分三种筛选器：
+--   * queriesOnInvisible：所有落于地图内非实时可见格（迷雾或黑雾）的调用；
+--   * queriesOutOfBounds：落于地图越界空地块的调用；
+--   * queriesOnForbiddenFog：精准对应红线 F-03，筛出落于普通迷雾格或黑雾格
+--     （即非实时可见、且非已探索敌对城市格）的违禁探测调用。
+-- 输入：names（方法名字符串或数组）。
+-- 输出：日志条目数组或次数。
 -- -----------------------------------------------------------------------------
 function WorldMethods:logOf(names)
     local wanted = {}
@@ -1974,45 +2096,50 @@ function WorldMethods:logOf(names)
     return out
 end
 
--- -----------------------------------------------------------------------------
--- 函数：w:logCount(names)
--- 做什么：统计指定方法被调用了多少次。输入同 w:logOf。
--- 输出：次数。
--- -----------------------------------------------------------------------------
 function WorldMethods:logCount(names)
     return #self:logOf(names)
 end
 
--- -----------------------------------------------------------------------------
--- 函数：w:queriesOnInvisible(names)
--- 做什么：筛出“目标格当时不可见”的调用：迷雾格（已探索但不可见）或未探索格。
---     泄露回归（T-68）用它断言引擎判定没有以看不见的格子为目标被调用过。
--- 输入：names，同 w:logOf。
--- 输出：日志条目的数组；空数组表示没有这类调用。
--- -----------------------------------------------------------------------------
 function WorldMethods:queriesOnInvisible(names)
     local out = {}
     for _, entry in ipairs(self:logOf(names)) do
-        if entry.visible ~= true then
+        if entry.x ~= nil and entry.visible ~= true then
             table.insert(out, entry)
         end
     end
     return out
 end
 
--- -----------------------------------------------------------------------------
--- 函数：w:clearLog()
--- 做什么：清空世界的调用日志。
--- -----------------------------------------------------------------------------
+function WorldMethods:queriesOutOfBounds(names)
+    local out = {}
+    for _, entry in ipairs(self:logOf(names)) do
+        if entry.x == nil then
+            table.insert(out, entry)
+        end
+    end
+    return out
+end
+
+function WorldMethods:queriesOnForbiddenFog(names)
+    local out = {}
+    for _, entry in ipairs(self:logOf(names)) do
+        if entry.x ~= nil and entry.visible ~= true then
+            local allowedFogHostileCity = (entry.revealed == true and entry.isHostileCity == true)
+            if not allowedFogHostileCity then
+                table.insert(out, entry)
+            end
+        end
+    end
+    return out
+end
+
 function WorldMethods:clearLog()
     self.log = {}
 end
 
 -- -----------------------------------------------------------------------------
--- 函数：S.describeEntry(entry)
--- 做什么：把一条调用日志转成一行文字，用在断言失败的提示里。
--- 输出：形如 “unit(1:0):CanRangeStrikeAt -> (6,5) visible=false revealed=true”，
---     或者 “CanHandleAction[MISSION_FORTIFY]”。
+-- 函数：S.describeEntry(entry) / S.describeLog(entries)
+-- 做什么：将调用日志条目格式化为诊断文本，供失败断言输出。
 -- -----------------------------------------------------------------------------
 function S.describeEntry(entry)
     local caller = ""
@@ -2024,16 +2151,13 @@ function S.describeEntry(entry)
     local target = ""
     if entry.x ~= nil then
         target = " -> (" .. tostring(entry.x) .. "," .. tostring(entry.y) .. ")"
-            .. " visible=" .. tostring(entry.visible) .. " revealed=" .. tostring(entry.revealed)
+            .. " visible=" .. tostring(entry.visible)
+            .. " revealed=" .. tostring(entry.revealed)
+            .. " hostileCity=" .. tostring(entry.isHostileCity)
     end
     return caller .. name .. target
 end
 
--- -----------------------------------------------------------------------------
--- 函数：S.describeLog(entries)
--- 做什么：把一组调用日志转成带编号的多行文字。
--- 输出：字符串；空数组返回 "(空)"。
--- -----------------------------------------------------------------------------
 function S.describeLog(entries)
     if #entries == 0 then return "(空)" end
     local lines = {}
@@ -2044,10 +2168,9 @@ function S.describeLog(entries)
 end
 
 -- -----------------------------------------------------------------------------
--- 第 16 节：建世界与用例边界
+-- 第 15 节：世界创建与用例边界管理（beginCase / endCase）
 -- -----------------------------------------------------------------------------
 
--- S.newWorld 可用的选项字段
 local WORLD_OPTION_FIELDS = fieldSet({
     "width", "height", "activePlayer", "turn", "processingMessages", "canEndTurn", "gameDefines",
     "teams", "players", "wars", "revealAll", "visibleAll", "units", "cities", "select",
@@ -2055,18 +2178,16 @@ local WORLD_OPTION_FIELDS = fieldSet({
     width = 24, height = 20, activePlayer = 0, turn = 1, processingMessages = false, canEndTurn = true,
 })
 
--- 用例期间允许新增的全局名：只有被测模块自己的两个全局表（验收项 A-8）
+-- A-01 洁净白名单：测试过程中允许新出现的业务全局仅限 CAB_Config 与 CAB_Collector
 local ALLOWED_CASE_GLOBALS = { CAB_Config = true, CAB_Collector = true }
 
--- 当前用例创建的世界列表，以及“当前世界”（Locale 转换查它的文本表）。
--- test_collector.lua 在每条用例开始时调用 S.beginCase 重建。
 S.worlds = {}
 S.currentWorld = nil
 
 -- -----------------------------------------------------------------------------
 -- 函数：globalNames()
--- 做什么：取当前全局环境里的全部名字。
--- 输出：{ [名字] = true }。
+-- 做什么：快照当前 _G 全部全局键名。
+-- 输出：{ [name] = true }。
 -- -----------------------------------------------------------------------------
 local function globalNames()
     local names = {}
@@ -2078,21 +2199,9 @@ end
 
 -- -----------------------------------------------------------------------------
 -- 函数：S.newWorld(opts)
--- 做什么：创建一个合成世界，并把与它对应的引擎全局对象装进全局环境。
---     每条用例的世界互相独立：GameInfo 行、地块、玩家都是各自的一份。
--- 输入：opts，可省略。可用字段：
---     width / height        网格尺寸，默认 24×20（计划 §10.2 要求不小于 20×20）
---     activePlayer          主玩家编号，默认 0；决定调用日志的参照队伍
---     turn                  回合号，默认 1
---     processingMessages    引擎是否在处理消息，默认假
---     canEndTurn            UI.CanEndTurn() 的返回值，默认真
---     gameDefines           要覆盖的 GameDefines 键值
---     teams / players       批量创建队伍与玩家，规格同 addTeam / addPlayer
---     wars                  交战的队伍对，如 { { 0, 1 }, { 0, 3 } }
---     revealAll / visibleAll  让某个队伍全图已探索 / 全图可见，值是队伍编号
---     units / cities        批量创建单位与城市，规格同 addUnit / addCity
---     select                开局就选中的单位对象
--- 输出：世界对象 w。布置方法用冒号调用，如 w:addUnit{…}。
+-- 做什么：创建一个彼此完全隔离的合成游戏世界，并将对应引擎全局表安装到 _G。
+-- 输入：opts（可选配置表，字段见 WORLD_OPTION_FIELDS）。
+-- 输出：世界对象 w。
 -- -----------------------------------------------------------------------------
 function S.newWorld(opts)
     local o = fillDefaults(opts, WORLD_OPTION_FIELDS, "newWorld")
@@ -2102,6 +2211,7 @@ function S.newWorld(opts)
         plots = {},
         players = {},
         deadPlayers = {},
+        nilPlayerSlots = {},
         teams = {},
         unitsByPlayer = {},
         citiesByPlayer = {},
@@ -2154,9 +2264,8 @@ end
 
 -- -----------------------------------------------------------------------------
 -- 函数：S.beginCase()
--- 做什么：一条用例开始前的准备：清空本条用例的世界与日志输出，建一个空白世界装进全局环境
---     （避免沿用上一条用例的世界），最后记下守卫记录与全局名的起始水位。
---     顺序不能反：建世界会安装 Players、Game 等引擎全局，水位必须在这之后才记。
+-- 做什么：单条用例启动前重置世界列表、print 缓冲与默认世界，并记录守卫与全局名水位线。
+-- 输出：nil。
 -- -----------------------------------------------------------------------------
 function S.beginCase()
     S.worlds = {}
@@ -2171,11 +2280,11 @@ end
 
 -- -----------------------------------------------------------------------------
 -- 函数：S.endCase()
--- 做什么：一条用例结束后的三项核对，任何一项不满足都算这条用例失败：
---     1. 世界快照：本条用例的每个世界，凡被读过（有基线快照的），现在的状态必须与基线一致；
---     2. 守卫记录：本条用例期间没有新的写入类调用，也没有调用桩未实现的方法；
---     3. 全局名：本条用例期间没有新建白名单之外的全局变量。
--- 输出：是否通过（布尔值），问题描述（字符串，通过时为空串）。
+-- 做什么：单条用例结束后执行三重红线核验：
+--         1. 世界深层快照与首次读取前基线完全一致（A-03）；
+--         2. 无新增写入类/DLL 避坑违规，无未实现方法调用（A-03、A-05）；
+--         3. 无白名单（CAB_Config / CAB_Collector）之外的新增全局变量（A-01）。
+-- 输出：(ok: boolean, detailMsg: string)。
 -- -----------------------------------------------------------------------------
 function S.endCase()
     local problems = {}
@@ -2183,29 +2292,33 @@ function S.endCase()
         if w._snapshot ~= nil then
             local now = S.snapshot(w)
             if now ~= w._snapshot then
-                table.insert(problems, "世界状态在用例期间发生了变化（疑似写入）："
-                    .. S.firstDiff(w._snapshot, now))
+                table.insert(
+                    problems,
+                    "世界状态在用例期间被修改（违反纯只读红线）：" .. S.firstDiff(w._snapshot, now)
+                )
             end
         end
     end
     for i = S.marks.violations + 1, #S.guard.violations do
         local record = S.guard.violations[i]
-        table.insert(problems, "触发只读守卫：" .. record.owner .. "." .. record.method .. "()")
+        table.insert(problems, "触发守卫违规：" .. record.owner .. "." .. record.method .. "()")
     end
     for i = S.marks.missing + 1, #S.guard.missing do
         local record = S.guard.missing[i]
-        table.insert(problems, "调用了桩未实现的方法：" .. record.owner .. "." .. record.method
-            .. "()（请补桩，或检查调用写法）")
+        table.insert(
+            problems,
+            "调用了桩未实现的方法：" .. record.owner .. "." .. record.method .. "()"
+        )
     end
-    local newGlobals = {}
+    local addedGlobals = {}
     for name in pairs(globalNames()) do
         if not S.marks.globals[name] and not ALLOWED_CASE_GLOBALS[name] then
-            table.insert(newGlobals, name)
+            table.insert(addedGlobals, name)
         end
     end
-    if #newGlobals > 0 then
-        table.sort(newGlobals)
-        table.insert(problems, "用例期间新增了全局变量：" .. table.concat(newGlobals, ", "))
+    if #addedGlobals > 0 then
+        table.sort(addedGlobals)
+        table.insert(problems, "用例期间新增了非法全局变量：" .. table.concat(addedGlobals, ", "))
     end
     return #problems == 0, table.concat(problems, "\n")
 end
