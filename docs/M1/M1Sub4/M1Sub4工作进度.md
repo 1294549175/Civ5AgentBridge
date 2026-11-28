@@ -14,9 +14,9 @@
 | **所属上级模块** | 模块 1：游戏端纯 Lua 桥接 Mod（`Civ5AgentBridge`） |
 | **本子模块范围** | 子模块 4（`mod/Lua/Civ5AgentBridgeJson.lua` + `mod/Lua/CAB_ExternalIO.lua`）+ 模块 1 最终壳层合龙（`Civ5AgentBridgeUI.lua` + `Civ5AgentBridge.modinfo` + `Civ5AgentBridgeCore.lua` 退役存根 + 正式部署）+ 独立测试套件（`tests/run_m1sub4_tests.py` & `tests/m1sub4/*`） |
 | **前置可启动性评估** | ✅ **可立即启动**（`CAB_Config`、`CAB_InfoCollector`、`CAB_TaskExecutor`、`CAB_Dispatcher` 均已于 2026-11-27 验收通过，`CAB_Dispatcher` 已预埋守卫式 `CAB_ExternalIO` 加载与全量 7 项依赖自检，零改代码即可无缝合龙） |
-| **总体阶段** | 🟡 **开发中（`WP1`~`WP2` 已验收，待启动 `WP3`）**（`CAB_Json` 升级加固、`CAB_ExternalIO` 全量实现与跨语言 SQLite3 测试均已交付） |
-| **当前待执行工作包** | **`WP3`：最终壳层合龙（`UI.lua` + `.modinfo` + `Core` 退役存根）+ 五模块全栈离线联调 + 四套件回归 + 正式部署** |
-| **最近一次测试结果** | ✅ **2026-11-28 WP2 全部通过**：`run_m1sub4_tests.py` 语法 `11/11`（0 待创建）+ 3 负向自检 + `16/16` 用例全绿（`--filter T-09` `1/1`）、红线违规 `0`；前序三套件零回归（M1Sub1 `40/40`、M1Sub2 `38/38`、M1Sub3 `29/29`，合计 `123/123` 全绿） |
+| **总体阶段** | 🟡 **开发中（`WP1`~`WP3` 已验收，正式部署就绪，待启动 `WP4` 真机验收）**（最终壳层合龙、五模块全栈离线联调、四套件总回归与正式镜像部署均已交付） |
+| **当前待执行工作包** | **`WP4`：正式部署态原生 BNW/IGE 真机全链路实证验收（不回滚）+ 产出《M1Sub4工作总结报告.md》** |
+| **最近一次测试结果** | ✅ **2026-11-28 WP3 全部通过**：`run_m1sub4_tests.py` 语法 `13/13` + 3 负向自检 + `.modinfo` 校验 `10/10` + 用例 `23/23`（单测 `16/16`、全栈 `7/7`，`--filter T-19` `1/1`）、红线违规 `0`；前序三套件零回归（M1Sub1 `40/40`、M1Sub2 `38/38`、M1Sub3 `29/29`，四套件合计 `130/130` 全绿）；`MODS/Civ5AgentBridge/` 12/12 SHA256 镜像一致且缓存库清零 |
 
 ---
 
@@ -40,7 +40,7 @@
 | **Plan** | 编制 M1Sub4 工作计划与进度文档 | `docs/M1/M1Sub4/M1Sub4工作计划.md`<br>`docs/M1/M1Sub4/M1Sub4工作进度.md` | ✅ 已完成 | 已完成 `D-01` ~ `D-06` 全分支访谈对齐，计划与进度两份文档已落盘待用户审阅确认 | 2026-11-27 |
 | **WP1** | 离线真实 SQLite3 测试底座 + `Civ5AgentBridgeJson.lua`（`CAB_Json`）升级加固与专项单测 | `tests/run_m1sub4_tests.py`<br>`tests/m1sub4/db_stubs.lua`<br>`tests/m1sub4/test_external_io.lua`<br>`mod/Lua/Civ5AgentBridgeJson.lua` | ✅ 已完成 | 语法 `10/10`（`CAB_ExternalIO.lua` 待创建）+ 3 负向自检；用例 `7/7`（`T-00`~`T-06`）全绿、`--filter T-03` `1/1`；红线违规 `0`；复跑 M1Sub1~3（`40/40`、`38/38`、`29/29`）零回归 | 2026-11-28 |
 | **WP2** | `mod/Lua/CAB_ExternalIO.lua` 全量实现（`X1`~`X8`）+ 跨语言 UTF-8 分片/会话/屏障/异常测试 | `mod/Lua/CAB_ExternalIO.lua`<br>`tests/m1sub4/db_stubs.lua`<br>`tests/m1sub4/test_external_io.lua` | ✅ 已完成 | 语法 `11/11`（0 待创建）+ 3 负向自检；用例 `16/16`（`T-00`~`T-15`）全绿、`--filter T-09` `1/1`；红线违规 `0`；真实 DB 审计打开 15 / 写 183 / 读 196；复跑 M1Sub1~3（`40/40`、`38/38`、`29/29`）零回归 | 2026-11-28 |
-| **WP3** | 最终壳层合龙（`UI.lua` + `.modinfo` + `Core` 退役存根）+ 五模块全栈离线联调 + 四套件回归 + 正式部署 | `mod/Lua/Civ5AgentBridgeUI.lua`<br>`mod/Civ5AgentBridge.modinfo`<br>`mod/Lua/Civ5AgentBridgeCore.lua`<br>`tests/run_m1sub4_tests.py`<br>`tests/m1sub4/*` | `[ ] 待执行` | — | — |
+| **WP3** | 最终壳层合龙（`UI.lua` + `.modinfo` + `Core` 退役存根）+ 五模块全栈离线联调 + 四套件回归 + 正式部署 | `mod/Lua/Civ5AgentBridgeUI.lua`<br>`mod/Civ5AgentBridge.modinfo`<br>`mod/Lua/Civ5AgentBridgeCore.lua`<br>`tests/run_m1sub4_tests.py`<br>`tests/m1sub4/fullstack_stubs.lua`<br>`tests/m1sub4/test_fullstack.lua` | ✅ 已完成 | 语法 `13/13` + 3 负向自检；`.modinfo` 校验 `10/10`；用例 `23/23`（单测 `16/16` + 全栈 `7/7`，`--filter T-19` `1/1`）；红线违规 `0`；复跑 M1Sub1~3（`40/40`、`38/38`、`29/29`，合计 `130/130` 全绿）；正式部署 12/12 SHA256 一致且缓存库已清零 | 2026-11-28 |
 | **WP4** | 正式部署态原生 BNW/IGE 真机全链路验收（不回滚）+ 产出《M1Sub4工作总结报告.md》 | `tests/m1sub4/live_smoke_client.py`<br>`docs/M1/M1Sub4/M1Sub4工作总结报告.md`<br>`docs/M1/M1Sub4/M1Sub4工作进度.md` | `[ ] 待执行` | — | — |
 
 ---
@@ -110,3 +110,22 @@
     2. 正式更新 `mod/Civ5AgentBridge.modinfo`：登记全部 10 个正式 VFS 文件（全 `import="1"`、正斜杠 `/`、移除 `Lua/Civ5AgentBridgeCore.lua`），保持 `AffectsSavedGames=0` 与空壳 `Lua/Civ5AgentBridgeLoader.lua` 入口；
     3. 按 `D-02` 将 `mod/Lua/Civ5AgentBridgeCore.lua` 替换为极简合法 Lua 5.1 退役说明存根（清除全部旧单体代码与 `AirRaidCore`/`CanMoveOrAttackInto` 引用）；
     4. 在 `tests/run_m1sub4_tests.py` 与 `tests/m1sub4/*` 中新增 `.modinfo` XML 结构自动校验与五模块 + UI 壳层真实 SQLite3 全栈端到端联调用例，复跑四套件全部退出码 `0` 后执行 `scripts/deploy_mod.ps1 -ForceCopy -ClearCache` 完成正式镜像部署与缓存清理。
+
+### Session 3 — 2026-11-28（WP3：最终壳层合龙 + 五模块全栈离线联调 + 四套件回归 + 正式部署）
+* **完成工作**：
+  1. **最终壳层合龙与旧单体退役（`D-02` / `D-05` / `I-01` / `R-04`）**：
+     * 精简重构 `mod/Lua/Civ5AgentBridgeUI.lua` 为纯事件转发壳层（零全局变量导出、红线 `I-01` 违规为 `0`）：顶部自底向上守卫式按需加载 6 个正式模块（`CAB_Config` → `Civ5AgentBridgeJson` → `CAB_ExternalIO` → `CAB_InfoCollector` → `CAB_TaskExecutor` → `CAB_Dispatcher`）；经 `pcall(CAB_Dispatcher.Initialize, CAB_UpdateStatusLabel)` 引导启动，仅当返回 `true` 时挂载 4 项宿主回调（按钮点击、回合开始、回合结束、`ContextPtr:SetUpdate`）并以 `local s_HooksRegistered` 防重入；初始化失败时刷新状态栏为 `"Agent Bridge: Init Failed"` 且绝不挂载帧循环；
+     * 正式更新 `mod/Civ5AgentBridge.modinfo`：登记全部 10 个正式 VFS 文件（全 `import="1"`、正斜杠 `/`、移除 `Lua/Civ5AgentBridgeCore.lua`），保持 UUID、BNW `1.0.3.279` 依赖、`AffectsSavedGames=0` 与唯一空壳 `Lua/Civ5AgentBridgeLoader.lua` 入口；
+     * 按 `D-02` 将 `mod/Lua/Civ5AgentBridgeCore.lua` 替换为极简纯注释合法 Lua 5.1 退役存根，清除旧单体代码与遗留禁令符号，保障前序回归脚本零改动全绿。
+  2. **升级 `tests/run_m1sub4_tests.py` 并新建五模块全栈离线联调测试套件**：
+     * 将 `tests/run_m1sub4_tests.py` 升级为四阶段自动化验收入口：阶段 1 覆盖全量 13 个 Lua 文件编译 + 3 负向自检；阶段 2 新增 `.modinfo` XML 结构与退役存根 10 项自动校验（`A-06`）；阶段 3 保留 WP1~WP2 隔离单测（`T-00`~`T-15`）；阶段 4 启动独立 `lupa.lua51` 沙箱与真实 `sqlite3` 后端执行五模块全栈联调（`T-16`~`T-22`）；
+     * 新建 `tests/m1sub4/fullstack_stubs.lua`（只读复用 `tests/m1sub3/engine_stubs.lua` 零修改前序测试，叠加真实 SQLite3 `Modding.OpenUserData` 与 Civ5 UI 宿主桩 `Controls`/`Mouse`/`Events`/`ContextPtr`）与 `tests/m1sub4/test_fullstack.lua`（覆盖静态红线审计、冷启动 6 模块顺序与 4 回调挂载、初始化失败降级、繁/简体中文 `get_policy_options` 与 36KB+ `test_large_payload` 跨语言分片无损闭环、`execute_unit_action` + `purchase_city_plot` 两段式跨帧异步结算、坏 JSON/非对象隔离与会话重启重置、手动同步序号隔离 `S-05`、`end_turn` → AI 门控 → `ActivePlayerTurnStart` 跨回合自动推送）。
+  3. **四套件全量回归、正式镜像部署与 D-01 白名单审计**：
+     * `python Civ5AgentBridge/tests/run_m1sub4_tests.py`：语法 `13/13` + 3 负向自检、`.modinfo` 校验 `10/10`、桩测试 `23/23`（单测 `16/16` + 全栈 `7/7`，`--filter T-19` `1/1`），两套沙箱红线违规与未实现方法均为 `0`（单测 DB 打开 15 / 写 183 / 读 196；全栈 DB 打开 8 / 写 86 / 读 57）；
+     * 复跑前序三套件零回归：`run_m1sub1_tests.py`（`40/40`）、`run_m1sub2_tests.py`（`38/38`）、`run_m1sub3_tests.py`（`29/29`），四套件合计 `130/130` 退出码均为 `0`；
+     * 核验游戏未运行后执行 `scripts/deploy_mod.ps1 -ForceCopy -ClearCache`，逐文件 SHA256 核验 `Civ5AgentBridge/mod/` 与 `MODS/Civ5AgentBridge/` 全部 12/12 文件一致（`mismatch=0`），`cache/Civ5*.db` 残留为 `0`；`git status --short` 确认 100% 落在 M1Sub4 白名单内。
+* **当前卡点 / 交接给下一会话**：
+  * 无卡点，正式部署态 `MODS/Civ5AgentBridge/` 已就绪，下一会话可直接启动 **`WP4`**（正式部署态原生 BNW/IGE 真机全链路实证验收 + 结项交付）：
+    1. 新建 `tests/m1sub4/live_smoke_client.py`：落地 `sqlite3` `text_factory = bytes` 拼片解码与 `rpc_session_id` 握手协议，直接对接正式部署的 `MODS/Civ5AgentBridge/`（零临时垫片、零修改 `mod/`）；
+    2. 配合用户启动原生《文明5：BNW v1.0.3.279》+ IGE 进入单人局，依次实证实机验收清单（空壳加载与右上角状态栏、首帧自动推送 `turn_overview_auto` + `turn_overview_auto_seq` + 心跳、繁/简体中文大包与 `test_large_payload` 32KB+ 分片零 UTF-8 错、`rpc_session_id` 会话重置、只读查询/写动作跨帧结算/坏 JSON 错返隔离/手动同步不递增 `turn_seq`/AI 门控与 `end_turn` 推进 `Turn N → Turn N+1` 自动推送）并核查 `Logs/Lua.log` 全程零错误；
+    3. 保留正式部署态不回滚，复跑四套件总回归与 `git status` 白名单审计；产出《`M1Sub4工作总结报告.md`》（含 `A-01`~`A-10` 逐项对账与 `SYNC-M4-01`~`SYNC-M4-03` 上位文档回写建议书）并闭环更新本进度表。

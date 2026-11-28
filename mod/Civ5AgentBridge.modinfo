@@ -1,18 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Civ5AgentBridge.modinfo —— 《文明5》智能体指挥系统 Lua-SQLite 桥接 Mod 清单
-  做什么：声明 mod 元数据、VFS 导入文件清单及 InGameUIAddin 空壳 Loader 入口。
-  为什么：严格遵循工作区 AGENTS.md 硬性开发纪律：
+  Civ5AgentBridge.modinfo —— 《文明5》智能体指挥系统模块 1 正式纯 Lua 桥接 Mod 清单
+  做什么：声明 mod 元数据、正式 10 文件 VFS 导入清单及 InGameUIAddin 空壳 Loader 入口。
+  为什么：严格遵循工作区 AGENTS.md 与 M1Sub4 决策 D-02 / D-05 硬性开发纪律：
     1. 全部文件路径统一使用正斜杠 /；
     2. 被 include() 或 LuaContext 消费的文件一律置 import="1" 进 VFS；
     3. EntryPoint 采用空壳 Civ5AgentBridgeLoader.lua + 同名 xml 内嵌 <LuaContext> 装配，规避原生装配闪退；
-    4. AffectsSavedGames=0（纯 UI/SQLite 外部通信桥接，不写入存档 ScriptData，可随时在任意新局或旧存档开关）。
+    4. AffectsSavedGames=0（纯 UI/SQLite 外部通信桥接，不写入存档持久化数据，可随时在任意新局或旧存档开关）；
+    5. 原型单体脚本已正式退役卸载，不再进入游戏 VFS。
 -->
 <Mod id="c5a8b901-71d5-48fa-9d32-b265eb5fd373" version="1">
   <Properties>
     <Name>Civ5 Agent Command Bridge (智能体指挥桥接)</Name>
-    <Teaser>通过 SQLite IPC 向外部 MCP Server 暴露玩家可见态势与单位操控接口</Teaser>
-    <Description>用于 EXP-03 / EXP-04 技术验证及三层智能体指挥系统的游戏端纯 Lua 桥接层。严守战争迷雾边界，仅导出当前玩家可见/已探索数据，并接收外部原子动作指令。</Description>
+    <Teaser>通过五层纯 Lua 模块化 SQLite 桥接向外部智能体暴露玩家可见态势与原子指令执行接口</Teaser>
+    <Description>《文明5：美丽新世界 v1.0.3.279》智能体指挥系统模块 1 正式游戏端纯 Lua 桥接 Mod，包含公共配置（CAB_Config）、加固 JSON 底座（CAB_Json）、外部 SQLite 防腐通信层（CAB_ExternalIO）、只读信息采集层（CAB_InfoCollector）、原子任务执行层（CAB_TaskExecutor）与异步状态机调度层（CAB_Dispatcher）。严守战争迷雾边界，仅导出当前玩家可见/已探索数据并安全执行外部原子指令。</Description>
     <Authors>Civ5AgentBridge Team</Authors>
     <AffectsSavedGames>0</AffectsSavedGames>
     <SupportsSinglePlayer>1</SupportsSinglePlayer>
@@ -22,8 +23,12 @@
     <Game minversion="1.0.3.279" maxversion="1.0.3.279" />
   </Dependencies>
   <Files>
+    <File import="1">Lua/CAB_Config.lua</File>
     <File import="1">Lua/Civ5AgentBridgeJson.lua</File>
-    <File import="1">Lua/Civ5AgentBridgeCore.lua</File>
+    <File import="1">Lua/CAB_ExternalIO.lua</File>
+    <File import="1">Lua/CAB_InfoCollector.lua</File>
+    <File import="1">Lua/CAB_TaskExecutor.lua</File>
+    <File import="1">Lua/CAB_Dispatcher.lua</File>
     <File import="1">Lua/Civ5AgentBridgeUI.xml</File>
     <File import="1">Lua/Civ5AgentBridgeUI.lua</File>
     <File import="1">Lua/Civ5AgentBridgeLoader.lua</File>
