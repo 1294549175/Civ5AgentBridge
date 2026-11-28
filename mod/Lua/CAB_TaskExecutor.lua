@@ -8,11 +8,12 @@
 -- 依赖：仅允许 include("CAB_Config") 与 include("CAB_InfoCollector") 各一次；
 --       严禁引入 Civ5AgentBridgeJson、CAB_ExternalIO、CAB_Dispatcher 或 AirRaidCore。
 -- 对外契约：
---   * 仅导出唯一全局变量 CAB_Executor（规划共 9 个公开接口，按 WP1~WP4 渐进落盘）：
+--   * 仅导出唯一全局变量 CAB_Executor（精确 12 个公开接口：原 M1Sub2 9 项 + M1Sub3 WP5 3 项）：
 --       WP1: Initialize
 --       WP2: StartUnitAction / StartCityRangeAttack
---       WP3: IsSettlementBusy / FinalizeActionSettlement
+--       WP3: IsSettlementBusy / FinalizeActionSettlement（覆盖 8 类 settlementKind）
 --       WP4: PurchaseCityItem / SetCityProduction / PurchaseCityPlot / ExecuteEndTurn
+--       WP5 (D-08): SetResearchTech / AdoptPolicyOrBranch / PromoteUnit
 --   * 全部内部校验、动作分发与结算辅助函数一律声明为 local；
 --   * 模块私有状态仅保留 s_Initialized，零跨调用实体缓存。
 --
@@ -67,6 +68,9 @@ local REQUIRED_COLLECTOR_FUNCS = {
     "BuildTurnOverview",
     "BuildUnitContextAndCandidates",
     "GetCityDetail",
+    "GetResearchOptions",
+    "GetPolicyOptions",
+    "GetUnitPromotions",
 }
 
 -- -----------------------------------------------------------------------------
@@ -1329,6 +1333,103 @@ local function isCityProductionApplied(pCity, baselineContext)
     return (queueLenNow >= 1) and (prodNow ~= "NONE")
 end
 
+-- -----------------------------------------------------------------------------
+-- 函数：isResearchApplied(pPlayer, baselineContext)
+-- 做什么：判定 SET_RESEARCH 科研/免费科技指令是否已在真实引擎中落地。
+-- 为什么：Network.SendResearch 经 C++ NetMessage 队列跨帧落地；免费科技以 HasTech 或
+--         免费科技计数递减作为完成信号，常规研究以 GetCurrentResearch() == techId 为完成信号。
+-- 输入：pPlayer、baselineContext。
+-- 输出：boolean。
+-- -----------------------------------------------------------------------------
+local function isResearchApplied(pPlayer, baselineContext)
+    if pPlayer == nil or type(baselineContext) ~= "table" or not isInteger(baselineContext.techId) then
+        return false
+    end
+    local techId = baselineContext.techId
+    if baselineContext.isFreeTech == true then
+        local teamId = pPlayer:GetTeam()
+        local pTeam = (Teams ~= nil and teamId ~= nil and teamId >= 0) and Teams[teamId] or nil
+        local pTeamTechs = (pTeam ~= nil and pTeam.GetTeamTechs ~= nil) and pTeam:GetTeamTechs() or nil
+        if pTeamTechs ~= nil and pTeamTechs.HasTech ~= nil then
+            local okHas, hasNow = pcall(pTeamTechs.HasTech, pTeamTechs, techId)
+            if okHas and hasNow == true then
+                return true
+            end
+        end
+        local freeBefore = (type(baselineContext.freeTechsBefore) == "number")
+            and baselineContext.freeTechsBefore or 0
+        local freeNow = (pPlayer.GetNumFreeTechs ~= nil and pPlayer:GetNumFreeTechs()) or freeBefore
+        return freeNow < freeBefore
+    end
+    local currNow = (pPlayer.GetCurrentResearch ~= nil and pPlayer:GetCurrentResearch()) or -1
+    return currNow == techId
+end
+
+-- -----------------------------------------------------------------------------
+-- 函数：isPolicyAdoptionApplied(pPlayer, baselineContext)
+-- 做什么：判定 ADOPT_POLICY 开启分支或采纳政策/信条指令是否已在真实引擎中落地。
+-- 为什么：Network.SendUpdatePolicies 经 C++ NetMessage 队列跨帧生效，分支核验
+--         IsPolicyBranchUnlocked，政策/信条核验 HasPolicy。
+-- 输入：pPlayer、baselineContext。
+-- 输出：boolean。
+-- -----------------------------------------------------------------------------
+local function isPolicyAdoptionApplied(pPlayer, baselineContext)
+    if pPlayer == nil or type(baselineContext) ~= "table" or not isInteger(baselineContext.targetId) then
+        return false
+    end
+    local targetId = baselineContext.targetId
+    if baselineContext.targetCategory == "BRANCH" then
+        if pPlayer.IsPolicyBranchUnlocked ~= nil then
+            local okU, resU = pcall(pPlayer.IsPolicyBranchUnlocked, pPlayer, targetId)
+            return okU and resU == true
+        end
+        return false
+    end
+    if pPlayer.HasPolicy ~= nil then
+        local okP, resP = pcall(pPlayer.HasPolicy, pPlayer, targetId)
+        return okP and resP == true
+    end
+    return false
+end
+
+-- -----------------------------------------------------------------------------
+-- 函数：isUnitPromotionApplied(pPlayer, baselineContext)
+-- 做什么：判定 PROMOTE_UNIT 晋升指令是否已在真实引擎中落地。
+-- 为什么：常规永久晋升以 IsHasPromotion(promoId) 或等级递增判定；PROMOTION_INSTA_HEAL
+--         不驻留 IsHasPromotion，须联合等级递增、伤害减少或 IsPromotionReady 解除判定。
+-- 输入：pPlayer、baselineContext。
+-- 输出：boolean。
+-- -----------------------------------------------------------------------------
+local function isUnitPromotionApplied(pPlayer, baselineContext)
+    if pPlayer == nil or type(baselineContext) ~= "table" or not isInteger(baselineContext.unitID) then
+        return false
+    end
+    local pUnit = pPlayer:GetUnitByID(baselineContext.unitID)
+    if not isUnitAlive(pUnit) then
+        return false
+    end
+    local levelBefore = (type(baselineContext.levelBefore) == "number") and baselineContext.levelBefore or 1
+    local levelNow = (pUnit.GetLevel ~= nil and pUnit:GetLevel()) or levelBefore
+    if levelNow > levelBefore then
+        return true
+    end
+    if baselineContext.isInstaHeal == true then
+        local dmgBefore = (type(baselineContext.damageBefore) == "number") and baselineContext.damageBefore or 0
+        local dmgNow = pUnit:GetDamage() or dmgBefore
+        if dmgNow < dmgBefore then
+            return true
+        end
+        return not safeCallBool(pUnit, "IsPromotionReady")
+    end
+    if isInteger(baselineContext.promotionId) and pUnit.IsHasPromotion ~= nil then
+        local okH, resH = pcall(pUnit.IsHasPromotion, pUnit, baselineContext.promotionId)
+        if okH and resH == true then
+            return true
+        end
+    end
+    return false
+end
+
 -- 输出：boolean（true 表示仍在忙碌，false 表示结算完成或输入无效）。
 -- -----------------------------------------------------------------------------
 function CAB_Executor.IsSettlementBusy(baselineContext)
@@ -1393,6 +1494,19 @@ function CAB_Executor.IsSettlementBusy(baselineContext)
             return false
         end
         return not isCityProductionApplied(pCity, baselineContext)
+
+    elseif kind == "SET_RESEARCH" then
+        return not isResearchApplied(pPlayer, baselineContext)
+
+    elseif kind == "ADOPT_POLICY" then
+        return not isPolicyAdoptionApplied(pPlayer, baselineContext)
+
+    elseif kind == "PROMOTE_UNIT" then
+        local pUnit = isInteger(baselineContext.unitID) and pPlayer:GetUnitByID(baselineContext.unitID) or nil
+        if not isUnitAlive(pUnit) then
+            return false
+        end
+        return not isUnitPromotionApplied(pPlayer, baselineContext)
     end
 
     return false
@@ -1605,6 +1719,127 @@ function CAB_Executor.FinalizeActionSettlement(baselineContext, settleWaitMs)
             current_production = currentProduction,
             turns_left = turnsLeft,
             order_queue_length = queueLen,
+            settle_wait_ms = waitMs,
+            timed_out = timedOut,
+        }
+
+    elseif kind == "SET_RESEARCH" then
+        local applied = isResearchApplied(pPlayer, baselineContext)
+        local currId = (pPlayer ~= nil and pPlayer.GetCurrentResearch ~= nil and pPlayer:GetCurrentResearch()) or -1
+        local currType = nil
+        if type(currId) == "number" and currId >= 0 and GameInfo ~= nil and GameInfo.Technologies ~= nil then
+            local currRow = GameInfo.Technologies[currId]
+            if currRow ~= nil and currRow.Type ~= nil and currRow.Type ~= "" then
+                currType = currRow.Type
+            end
+        end
+        local freeBefore = (type(baselineContext.freeTechsBefore) == "number")
+            and baselineContext.freeTechsBefore or 0
+        local freeAfter = (pPlayer ~= nil and pPlayer.GetNumFreeTechs ~= nil and pPlayer:GetNumFreeTechs())
+            or freeBefore
+        local turnsLeft = 0
+        if pPlayer ~= nil and pPlayer.GetResearchTurnsLeft ~= nil and isInteger(baselineContext.techId)
+            and baselineContext.isFreeTech ~= true
+        then
+            local okT, tVal = pcall(pPlayer.GetResearchTurnsLeft, pPlayer, baselineContext.techId, true)
+            if okT and type(tVal) == "number" then
+                turnsLeft = tVal
+            end
+        end
+
+        local errorReason = nil
+        if not applied then
+            if timedOut then
+                errorReason = "Research selection did not apply before settlement timeout"
+            else
+                errorReason = "Research selection did not apply"
+            end
+        end
+
+        return {
+            __is_object = true,
+            executed = applied,
+            error_reason = errorReason,
+            tech_id = baselineContext.techId,
+            tech_type = baselineContext.techType,
+            is_free_tech = (baselineContext.isFreeTech == true),
+            current_research_id = (type(currId) == "number" and currId >= 0) and currId or nil,
+            current_research_type = currType,
+            free_techs_before = freeBefore,
+            free_techs_after = freeAfter,
+            turns_left = turnsLeft,
+            settle_wait_ms = waitMs,
+            timed_out = timedOut,
+        }
+
+    elseif kind == "ADOPT_POLICY" then
+        local adopted = isPolicyAdoptionApplied(pPlayer, baselineContext)
+        local cultureBefore = (type(baselineContext.cultureBefore) == "number")
+            and baselineContext.cultureBefore or 0
+        local cultureAfter = (pPlayer ~= nil and pPlayer.GetJONSCulture ~= nil and pPlayer:GetJONSCulture())
+            or cultureBefore
+        local freeBefore = (type(baselineContext.freePoliciesBefore) == "number")
+            and baselineContext.freePoliciesBefore or 0
+        local freeAfter = (pPlayer ~= nil and pPlayer.GetNumFreePolicies ~= nil and pPlayer:GetNumFreePolicies())
+            or freeBefore
+        local nextCostAfter = (pPlayer ~= nil and pPlayer.GetNextPolicyCost ~= nil and pPlayer:GetNextPolicyCost()) or 0
+
+        local errorReason = nil
+        if not adopted then
+            if timedOut then
+                errorReason = "Policy adoption did not apply before settlement timeout"
+            else
+                errorReason = "Policy adoption did not apply"
+            end
+        end
+
+        return {
+            __is_object = true,
+            adopted = adopted,
+            error_reason = errorReason,
+            target_category = baselineContext.targetCategory,
+            target_id = baselineContext.targetId,
+            target_type = baselineContext.targetType,
+            culture_before = cultureBefore,
+            culture_after = cultureAfter,
+            free_policies_before = freeBefore,
+            free_policies_after = freeAfter,
+            next_policy_cost_after = nextCostAfter,
+            settle_wait_ms = waitMs,
+            timed_out = timedOut,
+        }
+
+    elseif kind == "PROMOTE_UNIT" then
+        local pUnit = (pPlayer ~= nil and isInteger(baselineContext.unitID))
+            and pPlayer:GetUnitByID(baselineContext.unitID) or nil
+        local promoted = isUnitPromotionApplied(pPlayer, baselineContext)
+        local levelBefore = (type(baselineContext.levelBefore) == "number")
+            and baselineContext.levelBefore or 1
+        local levelAfter = (isUnitAlive(pUnit) and pUnit.GetLevel ~= nil and pUnit:GetLevel()) or levelBefore
+        local readyAfter = isUnitAlive(pUnit) and safeCallBool(pUnit, "IsPromotionReady")
+        local unitAfter = CAB_Collector.SerializeUnitSummary(pUnit)
+
+        local errorReason = nil
+        if not promoted then
+            if timedOut then
+                errorReason = "Unit promotion did not apply before settlement timeout"
+            else
+                errorReason = "Unit promotion did not apply"
+            end
+        end
+
+        return {
+            __is_object = true,
+            promoted = promoted,
+            error_reason = errorReason,
+            unit_id = baselineContext.unitID,
+            promotion_id = baselineContext.promotionId,
+            promotion_type = baselineContext.promotionType,
+            is_insta_heal = (baselineContext.isInstaHeal == true),
+            level_before = levelBefore,
+            level_after = levelAfter,
+            is_promotion_ready_after = readyAfter,
+            unit_after = unitAfter,
             settle_wait_ms = waitMs,
             timed_out = timedOut,
         }
@@ -2278,4 +2513,458 @@ function CAB_Executor.ExecuteEndTurn(activePlayerID, autoSkipReadyUnits)
         auto_skipped_unit_ids = autoSkippedUnitIds,
         status = "WAITING_NEXT_TURN",
     }
+end
+
+-- -----------------------------------------------------------------------------
+-- 第 6 节：公开接口 E10 / E11 / E12 — 三大回合硬阻塞安全写动作（M1Sub3 WP5 / D-08）
+-- -----------------------------------------------------------------------------
+
+-- -----------------------------------------------------------------------------
+-- 函数：isGameOptionEnabled(optionName)
+-- 做什么：安全查询 Game.IsOption(GameOptionTypes[optionName]) 开关态。
+-- 为什么：用于拦截 GAMEOPTION_NO_SCIENCE / GAMEOPTION_NO_POLICIES / GAMEOPTION_NO_RELIGION
+--         禁用的规则写指令，并在测试桩或精简环境下保持零异常。
+-- 输入：optionName（GameOptionTypes 枚举键名）。
+-- 输出：boolean。
+-- -----------------------------------------------------------------------------
+local function isGameOptionEnabled(optionName)
+    if Game == nil or Game.IsOption == nil or GameOptionTypes == nil then
+        return false
+    end
+    local optId = GameOptionTypes[optionName]
+    if optId == nil then
+        return false
+    end
+    local ok, res = pcall(Game.IsOption, optId)
+    return ok and res == true
+end
+
+-- -----------------------------------------------------------------------------
+-- 函数：findPromotionGameActionIndex(promoId, promoType)
+-- 做什么：在当前已选中单位的 GameInfoActions 中定位对应晋升动作索引 iAction。
+-- 为什么：严格参照官方 UnitPanel.lua:90-91, 206, 285，匹配 ACTIONSUBTYPE_PROMOTION 且
+--         action.CommandData == promoId（或 action.Type == promoType）并通过双层
+--         Game.CanHandleAction 校验，保证与游戏原生 UI 按钮 100% 同源。
+-- 输入：promoId（整数晋升 ID）、promoType（晋升 Type 字符串）。
+-- 输出：整数动作索引 iAction 或 nil。
+-- -----------------------------------------------------------------------------
+local function findPromotionGameActionIndex(promoId, promoType)
+    if GameInfoActions == nil or Game == nil or Game.CanHandleAction == nil then
+        return nil
+    end
+    local promoSubType = (ActionSubTypes ~= nil) and ActionSubTypes.ACTIONSUBTYPE_PROMOTION or nil
+    for iAction = 0, #GameInfoActions do
+        local action = GameInfoActions[iAction]
+        if action ~= nil then
+            local subMatch = (promoSubType == nil) or (action.SubType == promoSubType)
+                or (action.SubType == "ACTIONSUBTYPE_PROMOTION")
+            if subMatch and (action.CommandData == promoId or action.Type == promoType) then
+                if Game.CanHandleAction(iAction, 0, 1) and Game.CanHandleAction(iAction) then
+                    return iAction
+                end
+            end
+        end
+    end
+    return nil
+end
+
+-- -----------------------------------------------------------------------------
+-- 函数：CAB_Executor.SetResearchTech(activePlayerID, techKeyOrId)  [E10]
+-- 做什么：校验并下发科研选择或免费科技选择（Network.SendResearch），返回 SET_RESEARCH
+--         短延迟异步结算基线，解除 ENDTURN_BLOCKING_RESEARCH / ENDTURN_BLOCKING_FREE_TECH。
+-- 为什么：
+--   1. 严格落实 E-01（活动回合与消息队列门控）与 E-02（前置校验失败零写入）；
+--   2. 严格参照官方 TechPopup.lua:53, 122-136 与 TechTree.lua:442：免费科技时传
+--      iDiscover = GetNumFreeTechs() 并额外校验 CanResearchForFree；
+--   3. Network.SendResearch 经 C++ NetMessage 跨帧落地，纳入 0.10s 短延迟结算精准回读。
+-- 输入：activePlayerID (int)、techKeyOrId (string | int，如 "TECH_POTTERY" 或 0)。
+-- 输出：(ok: boolean, errMsg: string | nil, baselineContext: table | nil)。
+-- -----------------------------------------------------------------------------
+function CAB_Executor.SetResearchTech(activePlayerID, techKeyOrId)
+    -- 1. E-01 活动回合与消息队列门控
+    local gateOk, gateErr, pPlayer, _, pActiveTeam = validateActivePlayerWriteGate(activePlayerID)
+    if not gateOk then
+        return false, gateErr, nil
+    end
+
+    if isGameOptionEnabled("GAMEOPTION_NO_SCIENCE") then
+        return false, "Science is disabled by game options (GAMEOPTION_NO_SCIENCE)", nil
+    end
+
+    -- 2. 解析科技数据库条目（支持 Type 字符串或整数 ID）
+    local techId, techType = resolveGameInfoEntry(GameInfo and GameInfo.Technologies, techKeyOrId)
+    if techId == nil or techType == nil then
+        return false, "Unknown technology identifier: " .. tostring(techKeyOrId), nil
+    end
+    local techRow = GameInfo.Technologies[techId]
+
+    -- 3. 拦截已研究非 Repeat 科技，并执行引擎 CanResearch / CanResearchForFree 前置校验
+    local pTeamTechs = (pActiveTeam.GetTeamTechs ~= nil) and pActiveTeam:GetTeamTechs() or nil
+    if pTeamTechs ~= nil and pTeamTechs.HasTech ~= nil then
+        local okHas, hasTech = pcall(pTeamTechs.HasTech, pTeamTechs, techId)
+        if okHas and hasTech == true and techRow.Repeat ~= true then
+            return false, "Technology is already researched: " .. techType, nil
+        end
+    end
+
+    if pPlayer.CanResearch == nil then
+        return false, "Player:CanResearch is unavailable", nil
+    end
+    local okCan, canRes = pcall(pPlayer.CanResearch, pPlayer, techId)
+    if not (okCan and canRes == true) then
+        return false, "Player cannot research technology (prerequisites unmet): " .. techType, nil
+    end
+
+    local freeTechsBefore = (pPlayer.GetNumFreeTechs ~= nil and pPlayer:GetNumFreeTechs()) or 0
+    local isFreeTech = (freeTechsBefore > 0)
+    if isFreeTech and pPlayer.CanResearchForFree ~= nil then
+        local okFree, canFree = pcall(pPlayer.CanResearchForFree, pPlayer, techId)
+        if not (okFree and canFree == true) then
+            return false, "Player cannot choose free technology: " .. techType, nil
+        end
+    end
+
+    if Network == nil or Network.SendResearch == nil then
+        return false, "Network.SendResearch is unavailable", nil
+    end
+
+    -- 4. 下发原生 Network.SendResearch(eTech, iDiscover, -1, false) 并返回短延迟异步结算基线
+    local currentResearchBefore = (pPlayer.GetCurrentResearch ~= nil and pPlayer:GetCurrentResearch()) or -1
+    Network.SendResearch(techId, freeTechsBefore, -1, false)
+
+    debugLog(
+        "SetResearchTech dispatched tech=" .. techType
+            .. " id=" .. tostring(techId)
+            .. " freeTechs=" .. tostring(freeTechsBefore)
+    )
+
+    local baselineContext = {
+        settlementKind = "SET_RESEARCH",
+        activePlayerID = activePlayerID,
+        actionType = "SET_RESEARCH_TECH",
+        techId = techId,
+        techType = techType,
+        isFreeTech = isFreeTech,
+        freeTechsBefore = freeTechsBefore,
+        currentResearchBefore = currentResearchBefore,
+        minWaitSec = (type(CAB_Config) == "table" and CAB_Config.PLOT_BUY_SETTLE_SEC) or 0.10,
+        maxTimeoutSec = (type(CAB_Config) == "table" and CAB_Config.MAX_SETTLE_TIMEOUT_SEC) or 1.50,
+    }
+    return true, nil, baselineContext
+end
+
+-- -----------------------------------------------------------------------------
+-- 函数：CAB_Executor.AdoptPolicyOrBranch(activePlayerID, targetCategory, keyOrId)  [E11]
+-- 做什么：校验并开启社会政策分支（"BRANCH"）或采纳具体社会政策/意识形态信条（"POLICY"），
+--         下发 Network.SendUpdatePolicies 并返回 ADOPT_POLICY 短延迟异步结算基线，
+--         解除 ENDTURN_BLOCKING_POLICY / ENDTURN_BLOCKING_FREE_POLICY。
+-- 为什么：
+--   1. 严格落实 E-01 / E-02，拦截无城、禁用政策、已拥有、被互斥封锁、自动开/关门政策
+--      以及需走 SendIdeologyChoice 的意识形态分支；
+--   2. 严格参照官方 SocialPolicyPopup.lua:155, 349, 1206, 1232：开启分支使用
+--      CanUnlockPolicyBranch(branchID) + SendUpdatePolicies(id, false, true)，采纳政策/信条
+--      使用 CanAdoptPolicy / GetAvailableTenets + SendUpdatePolicies(id, true, true)。
+-- 输入：
+--   activePlayerID (int)               - 当前人类玩家 ID
+--   targetCategory ("BRANCH"|"POLICY") - 目标类别（nil 默认 "POLICY"）
+--   keyOrId (string | int)             - 分支或政策的 Type 字符串或整数 ID
+-- 输出：(ok: boolean, errMsg: string | nil, baselineContext: table | nil)。
+-- -----------------------------------------------------------------------------
+function CAB_Executor.AdoptPolicyOrBranch(activePlayerID, targetCategory, keyOrId)
+    -- 1. E-01 活动回合与消息队列门控
+    local gateOk, gateErr, pPlayer, _, pActiveTeam = validateActivePlayerWriteGate(activePlayerID)
+    if not gateOk then
+        return false, gateErr, nil
+    end
+
+    if isGameOptionEnabled("GAMEOPTION_NO_POLICIES") then
+        return false, "Social policies are disabled by game options (GAMEOPTION_NO_POLICIES)", nil
+    end
+
+    local numCities = (pPlayer.GetNumCities ~= nil and pPlayer:GetNumCities()) or 0
+    if numCities <= 0 then
+        return false, "Player must own at least one city to adopt policies", nil
+    end
+
+    local category = (targetCategory == nil) and "POLICY" or targetCategory
+    if category ~= "BRANCH" and category ~= "POLICY" then
+        return false, "Unsupported targetCategory: " .. tostring(targetCategory), nil
+    end
+
+    local cultureBefore = (pPlayer.GetJONSCulture ~= nil and pPlayer:GetJONSCulture()) or 0
+    local nextCostBefore = (pPlayer.GetNextPolicyCost ~= nil and pPlayer:GetNextPolicyCost()) or 0
+    local freePoliciesBefore = (pPlayer.GetNumFreePolicies ~= nil and pPlayer:GetNumFreePolicies()) or 0
+    local freeTenetsBefore = (pPlayer.GetNumFreeTenets ~= nil and pPlayer:GetNumFreeTenets()) or 0
+
+    local targetId = nil
+    local targetType = nil
+    local isPolicyFlag = (category == "POLICY")
+
+    if category == "BRANCH" then
+        targetId, targetType = resolveGameInfoEntry(GameInfo and GameInfo.PolicyBranchTypes, keyOrId)
+        if targetId == nil or targetType == nil then
+            return false, "Unknown policy branch identifier: " .. tostring(keyOrId), nil
+        end
+        local branchRow = GameInfo.PolicyBranchTypes[targetId]
+        if branchRow.PurchaseByLevel == true then
+            return false,
+                "Ideology branch cannot be unlocked via AdoptPolicyOrBranch (requires SendIdeologyChoice): " .. targetType,
+                nil
+        end
+        if branchRow.LockedWithoutReligion == true and isGameOptionEnabled("GAMEOPTION_NO_RELIGION") then
+            return false, "Policy branch is locked because religion is disabled: " .. targetType, nil
+        end
+        if pPlayer.IsPolicyBranchUnlocked ~= nil and pPlayer:IsPolicyBranchUnlocked(targetId) == true then
+            return false, "Policy branch is already unlocked: " .. targetType, nil
+        end
+        if pPlayer.IsPolicyBranchBlocked ~= nil and pPlayer:IsPolicyBranchBlocked(targetId) == true then
+            return false, "Policy branch is blocked by another branch: " .. targetType, nil
+        end
+        if pPlayer.CanUnlockPolicyBranch == nil then
+            return false, "Player:CanUnlockPolicyBranch is unavailable", nil
+        end
+        local okUnlock, canUnlock = pcall(pPlayer.CanUnlockPolicyBranch, pPlayer, targetId)
+        if not (okUnlock and canUnlock == true) then
+            local eraPrereq = branchRow.EraPrereq
+            if type(eraPrereq) == "string" and eraPrereq ~= ""
+                and GameInfoTypes ~= nil and type(GameInfoTypes[eraPrereq]) == "number"
+                and pActiveTeam.GetCurrentEra ~= nil
+                and (pActiveTeam:GetCurrentEra() or 0) < GameInfoTypes[eraPrereq]
+            then
+                return false,
+                    "Policy branch requires era " .. eraPrereq .. ": " .. targetType,
+                    nil
+            end
+            if freePoliciesBefore <= 0 and cultureBefore < nextCostBefore then
+                return false,
+                    string.format(
+                        "Insufficient culture to unlock policy branch %s: need %d, have %d",
+                        targetType, nextCostBefore, cultureBefore
+                    ),
+                    nil
+            end
+            return false, "Player cannot unlock policy branch: " .. targetType, nil
+        end
+    else
+        targetId, targetType = resolveGameInfoEntry(GameInfo and GameInfo.Policies, keyOrId)
+        if targetId == nil or targetType == nil then
+            return false, "Unknown policy identifier: " .. tostring(keyOrId), nil
+        end
+        local policyRow = GameInfo.Policies[targetId]
+        if type(policyRow.PolicyBranchType) ~= "string" or policyRow.PolicyBranchType == "" then
+            return false, "Automatic opener/finisher policy cannot be adopted directly: " .. targetType, nil
+        end
+        if pPlayer.HasPolicy ~= nil and pPlayer:HasPolicy(targetId) == true then
+            return false, "Policy is already adopted: " .. targetType, nil
+        end
+        if pPlayer.IsPolicyBlocked ~= nil and pPlayer:IsPolicyBlocked(targetId) == true then
+            return false, "Policy is blocked: " .. targetType, nil
+        end
+
+        local branchRow = (GameInfo ~= nil and GameInfo.PolicyBranchTypes ~= nil)
+            and GameInfo.PolicyBranchTypes[policyRow.PolicyBranchType] or nil
+        local isTenet = (branchRow ~= nil and branchRow.PurchaseByLevel == true)
+
+        if isTenet then
+            local ideologyId = (pPlayer.GetLateGamePolicyTree ~= nil and pPlayer:GetLateGamePolicyTree()) or -1
+            if ideologyId ~= branchRow.ID then
+                return false, "Tenet does not belong to player's active ideology: " .. targetType, nil
+            end
+            if freePoliciesBefore <= 0 and freeTenetsBefore <= 0 and cultureBefore < nextCostBefore then
+                return false,
+                    string.format(
+                        "Insufficient culture/free tenets to adopt tenet %s: need %d, have %d",
+                        targetType, nextCostBefore, cultureBefore
+                    ),
+                    nil
+            end
+            local tenetLvl = (isInteger(policyRow.Level) and policyRow.Level >= 1 and policyRow.Level <= 3)
+                and policyRow.Level or 1
+            local tenetAllowed = false
+            if pPlayer.GetAvailableTenets ~= nil then
+                local okList, list = pcall(pPlayer.GetAvailableTenets, pPlayer, tenetLvl)
+                if okList and type(list) == "table" then
+                    for _, tid in ipairs(list) do
+                        if tid == targetId then
+                            tenetAllowed = true
+                            break
+                        end
+                    end
+                end
+            elseif pPlayer.CanAdoptPolicy ~= nil then
+                local okCan, canRes = pcall(pPlayer.CanAdoptPolicy, pPlayer, targetId)
+                tenetAllowed = (okCan and canRes == true)
+            end
+            if not tenetAllowed then
+                return false, "Ideology tenet is not currently available for adoption: " .. targetType, nil
+            end
+            if tenetLvl >= 2 and pPlayer.GetTenet ~= nil then
+                local prevLvl = tenetLvl - 1
+                local prevMax = (prevLvl == 1) and 7 or 4
+                local curMax = (tenetLvl == 2) and 4 or 3
+                local prevCnt, curCnt = 0, 0
+                for idx = 1, prevMax do
+                    local okT, tid = pcall(pPlayer.GetTenet, pPlayer, ideologyId, prevLvl, idx)
+                    if okT and type(tid) == "number" and tid >= 0 then
+                        prevCnt = prevCnt + 1
+                    end
+                end
+                for idx = 1, curMax do
+                    local okT, tid = pcall(pPlayer.GetTenet, pPlayer, ideologyId, tenetLvl, idx)
+                    if okT and type(tid) == "number" and tid >= 0 then
+                        curCnt = curCnt + 1
+                    end
+                end
+                if curCnt >= curMax or prevCnt < curCnt + 2 then
+                    return false, "No open ideology tenet slot at level " .. tostring(tenetLvl) .. ": " .. targetType, nil
+                end
+            end
+        else
+            if pPlayer.CanAdoptPolicy == nil then
+                return false, "Player:CanAdoptPolicy is unavailable", nil
+            end
+            local okAdopt, canAdopt = pcall(pPlayer.CanAdoptPolicy, pPlayer, targetId)
+            if not (okAdopt and canAdopt == true) then
+                local okIgnore, canIgnore = pcall(pPlayer.CanAdoptPolicy, pPlayer, targetId, true)
+                if okIgnore and canIgnore == true and freePoliciesBefore <= 0 and cultureBefore < nextCostBefore then
+                    return false,
+                        string.format(
+                            "Insufficient culture to adopt policy %s: need %d, have %d",
+                            targetType, nextCostBefore, cultureBefore
+                        ),
+                        nil
+                end
+                return false, "Player cannot adopt policy (prerequisites or branch unmet): " .. targetType, nil
+            end
+        end
+    end
+
+    if Network == nil or Network.SendUpdatePolicies == nil then
+        return false, "Network.SendUpdatePolicies is unavailable", nil
+    end
+
+    -- 2. 下发原生 Network.SendUpdatePolicies(targetId, isPolicyFlag, true) 并返回短延迟结算基线
+    Network.SendUpdatePolicies(targetId, isPolicyFlag, true)
+
+    debugLog(
+        "AdoptPolicyOrBranch dispatched category=" .. category
+            .. " target=" .. targetType
+            .. " id=" .. tostring(targetId)
+    )
+
+    local baselineContext = {
+        settlementKind = "ADOPT_POLICY",
+        activePlayerID = activePlayerID,
+        actionType = "ADOPT_POLICY",
+        targetCategory = category,
+        targetId = targetId,
+        targetType = targetType,
+        cultureBefore = cultureBefore,
+        freePoliciesBefore = freePoliciesBefore,
+        freeTenetsBefore = freeTenetsBefore,
+        nextCostBefore = nextCostBefore,
+        minWaitSec = (type(CAB_Config) == "table" and CAB_Config.PLOT_BUY_SETTLE_SEC) or 0.10,
+        maxTimeoutSec = (type(CAB_Config) == "table" and CAB_Config.MAX_SETTLE_TIMEOUT_SEC) or 1.50,
+    }
+    return true, nil, baselineContext
+end
+
+-- -----------------------------------------------------------------------------
+-- 函数：CAB_Executor.PromoteUnit(activePlayerID, unitID, promotionKeyOrId)  [E12]
+-- 做什么：校验并为单位执行指定晋升（含常规永久晋升与 PROMOTION_INSTA_HEAL 立即回血），
+--         在 pcall 临时选区保护下通过 Game.HandleAction 下发原生晋升命令并无条件恢复原 UI 选区，
+--         返回 PROMOTE_UNIT 短延迟异步结算基线，解除 ENDTURN_BLOCKING_UNIT_PROMOTION。
+-- 为什么：
+--   1. 严格落实 E-01（活动回合门控）、E-02（校验失败零写入且原 UI 选区无痕恢复）与 E-06；
+--   2. 严格对齐官方 UnitPanel.lua:90-91, 206, 285, 892 的 GameInfoActions + HandleAction 链路，
+--      确保与游戏原生晋升面板 100% 同源。
+-- 输入：activePlayerID (int)、unitID (int)、promotionKeyOrId (string | int，如 "PROMOTION_SHOCK_1")。
+-- 输出：(ok: boolean, errMsg: string | nil, baselineContext: table | nil)。
+-- -----------------------------------------------------------------------------
+function CAB_Executor.PromoteUnit(activePlayerID, unitID, promotionKeyOrId)
+    -- 1. E-01 活动回合与消息队列门控
+    local gateOk, gateErr, pPlayer = validateActivePlayerWriteGate(activePlayerID)
+    if not gateOk then
+        return false, gateErr, nil
+    end
+
+    -- 2. 基础入参、己方存活单位与待晋升状态校验
+    if not isInteger(unitID) then
+        return false, "Invalid unitID: " .. tostring(unitID), nil
+    end
+    local pUnit = pPlayer:GetUnitByID(unitID)
+    if not isUnitAlive(pUnit) or pUnit:GetOwner() ~= activePlayerID then
+        return false, "Unit not found, dead, or not owned by active player: " .. tostring(unitID), nil
+    end
+    if not safeCallBool(pUnit, "IsPromotionReady") then
+        return false, "Unit is not ready for promotion: " .. tostring(unitID), nil
+    end
+
+    -- 3. 解析晋升条目并校验 CanAcquirePromotion（零 UI 选区副作用）
+    local promoId, promoType = resolveGameInfoEntry(GameInfo and GameInfo.UnitPromotions, promotionKeyOrId)
+    if promoId == nil or promoType == nil then
+        return false, "Unknown unit promotion identifier: " .. tostring(promotionKeyOrId), nil
+    end
+    local promoRow = GameInfo.UnitPromotions[promoId]
+    if promoRow.CannotBeChosen == true then
+        return false, "Promotion cannot be chosen directly: " .. promoType, nil
+    end
+
+    local isInstaHeal = (promoRow.InstaHeal == true)
+    local damageBefore = pUnit:GetDamage() or 0
+    if (not isInstaHeal) and pUnit.IsHasPromotion ~= nil and pUnit:IsHasPromotion(promoId) == true then
+        return false, "Unit already has promotion: " .. promoType, nil
+    end
+    if isInstaHeal and damageBefore <= 0 then
+        return false, "Unit is already at full HP and cannot use InstaHeal promotion", nil
+    end
+
+    if pUnit.CanAcquirePromotion == nil then
+        return false, "Unit:CanAcquirePromotion is unavailable", nil
+    end
+    local okAcq, canAcq = pcall(pUnit.CanAcquirePromotion, pUnit, promoId)
+    if not (okAcq and canAcq == true) then
+        return false, "Unit cannot acquire promotion: " .. promoType, nil
+    end
+
+    local levelBefore = (pUnit.GetLevel ~= nil and pUnit:GetLevel()) or 1
+
+    -- 4. 在 withTempUnitSelection（pcall + 无条件恢复原选区）保护下定位并执行 Game.HandleAction
+    local callOk, dispatched, dispatchErr = withTempUnitSelection(pUnit, function()
+        local iAction = findPromotionGameActionIndex(promoId, promoType)
+        if iAction == nil then
+            return false, "Promotion action is not currently executable in GameInfoActions: " .. promoType
+        end
+        Game.HandleAction(iAction)
+        return true, nil
+    end)
+
+    if not callOk then
+        return false, "PromoteUnit dispatch threw error: " .. tostring(dispatched), nil
+    end
+    if dispatched ~= true then
+        return false, tostring(dispatchErr or ("Failed to dispatch promotion: " .. promoType)), nil
+    end
+
+    debugLog(
+        "PromoteUnit dispatched unit=" .. tostring(unitID)
+            .. " promotion=" .. promoType
+            .. " id=" .. tostring(promoId)
+            .. " instaHeal=" .. tostring(isInstaHeal)
+    )
+
+    local baselineContext = {
+        settlementKind = "PROMOTE_UNIT",
+        activePlayerID = activePlayerID,
+        unitID = unitID,
+        actionType = "PROMOTE_UNIT",
+        promotionId = promoId,
+        promotionType = promoType,
+        isInstaHeal = isInstaHeal,
+        levelBefore = levelBefore,
+        damageBefore = damageBefore,
+        minWaitSec = (type(CAB_Config) == "table" and CAB_Config.PLOT_BUY_SETTLE_SEC) or 0.10,
+        maxTimeoutSec = (type(CAB_Config) == "table" and CAB_Config.MAX_SETTLE_TIMEOUT_SEC) or 1.50,
+    }
+    return true, nil, baselineContext
 end

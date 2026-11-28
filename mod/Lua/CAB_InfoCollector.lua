@@ -18,6 +18,8 @@
 --       BuildTurnOverview / BuildUnitContextAndCandidates
 --   * 深度城市查询主接口（WP-4）：
 --       GetCityDetail
+--   * 三大回合硬阻塞选项查询主接口（M1Sub3 WP5 / D-08 增量扩充）：
+--       GetResearchOptions / GetPolicyOptions / GetUnitPromotions
 --
 -- 架构红线与引擎依据（《docs/M1/M1Sub1/M1Sub1工作计划.md》§2 & §4）：
 --   1. 纯只读零写入（A-03）：严禁调用任何修改游戏状态、经济、领土或单位指令的接口；
@@ -1635,5 +1637,511 @@ function CAB_Collector.GetCityDetail(activePlayerID, cityID, includePurchasable)
         purchasable_buildings = purchasableBuildings,
         purchasable_units = purchasableUnits,
         purchasable_plots = purchasablePlots,
+    }
+end
+
+-- -----------------------------------------------------------------------------
+-- 第 6 节：三大回合硬阻塞选项查询主接口（M1Sub3 WP5 / D-08 增量扩充，F8 ~ F10）
+-- -----------------------------------------------------------------------------
+
+-- -----------------------------------------------------------------------------
+-- 函数：isGameOptionEnabled(optionName)
+-- 做什么：安全查询 Game.IsOption(GameOptionTypes[optionName]) 是否开启。
+-- 为什么：兼容测试桩或未定义某项游戏选项的场景，避免索引 nil 触发运行时错误。
+-- 输入：optionName（GameOptionTypes 枚举键名字符串）。
+-- 输出：boolean。
+-- -----------------------------------------------------------------------------
+local function isGameOptionEnabled(optionName)
+    if Game == nil or Game.IsOption == nil or GameOptionTypes == nil then
+        return false
+    end
+    local optId = GameOptionTypes[optionName]
+    if optId == nil then
+        return false
+    end
+    local ok, res = pcall(Game.IsOption, optId)
+    return ok and res == true
+end
+
+-- -----------------------------------------------------------------------------
+-- 函数：readTechCost(pPlayer, pTeamTechs, techRow) / readTechProgress(...) / readTechTurnsLeft(...)
+-- 做什么：参照官方 TechPanel.lua:72-73 与 TechPopup.lua:228-230 安全读取科技花费、进度与剩余回合。
+-- 为什么：同时兼容 Player 快捷方法与 TeamTechs 原生方法，零跨调用缓存，异常安全兜底。
+-- 输入：pPlayer、pTeamTechs、techRow（GameInfo.Technologies 行表）。
+-- 输出：number。
+-- -----------------------------------------------------------------------------
+local function readTechCost(pPlayer, pTeamTechs, techRow)
+    local techId = techRow.ID
+    if pPlayer ~= nil and pPlayer.GetResearchCost ~= nil then
+        local ok, val = pcall(pPlayer.GetResearchCost, pPlayer, techId)
+        if ok and type(val) == "number" then
+            return val
+        end
+    end
+    if pTeamTechs ~= nil and pTeamTechs.GetResearchCost ~= nil then
+        local ok, val = pcall(pTeamTechs.GetResearchCost, pTeamTechs, techId)
+        if ok and type(val) == "number" then
+            return val
+        end
+    end
+    return (type(techRow.Cost) == "number") and techRow.Cost or 0
+end
+
+local function readTechProgress(pPlayer, pTeamTechs, techId)
+    if pPlayer ~= nil and pPlayer.GetResearchProgress ~= nil then
+        local ok, val = pcall(pPlayer.GetResearchProgress, pPlayer, techId)
+        if ok and type(val) == "number" then
+            return val
+        end
+    end
+    if pTeamTechs ~= nil and pTeamTechs.GetResearchProgress ~= nil then
+        local ok, val = pcall(pTeamTechs.GetResearchProgress, pTeamTechs, techId)
+        if ok and type(val) == "number" then
+            return val
+        end
+    end
+    return 0
+end
+
+local function readTechTurnsLeft(pPlayer, techId)
+    if pPlayer ~= nil and pPlayer.GetResearchTurnsLeft ~= nil then
+        local ok, val = pcall(pPlayer.GetResearchTurnsLeft, pPlayer, techId, true)
+        if ok and type(val) == "number" then
+            return val
+        end
+    end
+    return 0
+end
+
+-- -----------------------------------------------------------------------------
+-- 函数：CAB_Collector.GetResearchOptions(activePlayerID)  [F8]
+-- 做什么：采集当前存活玩家的科研状态与全部合法可选科技（含常规研究与免费科技），
+--         供智能体处理 ENDTURN_BLOCKING_RESEARCH 与 ENDTURN_BLOCKING_FREE_TECH。
+-- 为什么：
+--   1. 参照官方 TechPopup.lua:122-147 与 TechTree.lua:579-696，严格校验
+--      GAMEOPTION_NO_SCIENCE、pPlayer:CanResearch(techID)，并在 GetNumFreeTechs() > 0
+--      时追加 pPlayer:CanResearchForFree(techID) 过滤；
+--   2. 纯只读、零 UI 选区副作用、零跨调用缓存，可安全在 AI 回合白名单放行。
+-- 输入：activePlayerID（当前玩家 ID）。
+-- 输出：ResearchOptionsDTO 表（带 __is_object = true）；非法/非存活玩家返回错误表。
+-- -----------------------------------------------------------------------------
+function CAB_Collector.GetResearchOptions(activePlayerID)
+    local pPlayer, errMsg = isValidAlivePlayer(activePlayerID)
+    if pPlayer == nil then
+        return makeErrorDto(errMsg)
+    end
+
+    local activeTeam = pPlayer:GetTeam()
+    local pActiveTeam = (Teams ~= nil and activeTeam ~= nil and activeTeam >= 0) and Teams[activeTeam] or nil
+    local pTeamTechs = (pActiveTeam ~= nil and pActiveTeam.GetTeamTechs ~= nil) and pActiveTeam:GetTeamTechs() or nil
+
+    local scienceDisabled = isGameOptionEnabled("GAMEOPTION_NO_SCIENCE")
+    local sciencePerTurn = (pPlayer.GetScience ~= nil and pPlayer:GetScience()) or 0
+    local overflowResearch = (pPlayer.GetOverflowResearch ~= nil and pPlayer:GetOverflowResearch()) or 0
+    local freeTechs = (pPlayer.GetNumFreeTechs ~= nil and pPlayer:GetNumFreeTechs()) or 0
+    local currTechId = (pPlayer.GetCurrentResearch ~= nil and pPlayer:GetCurrentResearch()) or -1
+
+    local currentResearch = nil
+    if type(currTechId) == "number" and currTechId >= 0 and GameInfo ~= nil and GameInfo.Technologies ~= nil then
+        local currRow = GameInfo.Technologies[currTechId]
+        if currRow ~= nil and currRow.Type ~= nil and currRow.Type ~= "" then
+            currentResearch = {
+                __is_object = true,
+                tech_id = currTechId,
+                tech_type = currRow.Type,
+                name = safeLocale(currRow.Description or currRow.Type),
+                era = currRow.Era or "",
+                cost = readTechCost(pPlayer, pTeamTechs, currRow),
+                progress = readTechProgress(pPlayer, pTeamTechs, currTechId),
+                turns_left = readTechTurnsLeft(pPlayer, currTechId),
+            }
+        end
+    end
+
+    local availableTechs = {}
+    local researchedTechs = {}
+
+    if GameInfo ~= nil and GameInfo.Technologies ~= nil then
+        for tech in GameInfo.Technologies() do
+            if tech ~= nil and tech.ID ~= nil and tech.Type ~= nil and tech.Type ~= "" then
+                local techId = tech.ID
+                local hasTech = false
+                if pTeamTechs ~= nil and pTeamTechs.HasTech ~= nil then
+                    local okHas, resHas = pcall(pTeamTechs.HasTech, pTeamTechs, techId)
+                    hasTech = (okHas and resHas == true)
+                end
+                if hasTech then
+                    table.insert(researchedTechs, tech.Type)
+                end
+
+                if (not scienceDisabled) and pPlayer.CanResearch ~= nil then
+                    local okCan, canRes = pcall(pPlayer.CanResearch, pPlayer, techId)
+                    if okCan and canRes == true then
+                        local eligible = true
+                        if freeTechs > 0 and pPlayer.CanResearchForFree ~= nil then
+                            local okFree, canFree = pcall(pPlayer.CanResearchForFree, pPlayer, techId)
+                            eligible = (okFree and canFree == true)
+                        end
+                        if eligible then
+                            table.insert(availableTechs, {
+                                __is_object = true,
+                                tech_id = techId,
+                                tech_type = tech.Type,
+                                name = safeLocale(tech.Description or tech.Type),
+                                era = tech.Era or "",
+                                cost = readTechCost(pPlayer, pTeamTechs, tech),
+                                progress = readTechProgress(pPlayer, pTeamTechs, techId),
+                                turns_left = readTechTurnsLeft(pPlayer, techId),
+                                is_current = (currTechId == techId),
+                                grid_x = tech.GridX or 0,
+                                grid_y = tech.GridY or 0,
+                            })
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    return {
+        __is_object = true,
+        science_disabled = scienceDisabled,
+        science_per_turn = sciencePerTurn,
+        overflow_research = overflowResearch,
+        free_techs_available = freeTechs,
+        is_free_tech_pending = (freeTechs > 0),
+        current_research = currentResearch,
+        available_techs = availableTechs,
+        researched_techs = researchedTechs,
+    }
+end
+
+-- -----------------------------------------------------------------------------
+-- 函数：CAB_Collector.GetPolicyOptions(activePlayerID)  [F9]
+-- 做什么：采集当前存活玩家的社会政策文化余额、下一次政策花费、免费政策/信条数、
+--         9 大常规政策分支状态、当前可开启分支、当前可采纳政策（含已选意识形态信条）与已采纳清单。
+-- 为什么：
+--   1. 严格参照官方 SocialPolicyPopup.lua:155, 234-655, 795：使用原生 CanUnlockPolicyBranch(branchID)
+--      校验分支开启，使用 CanAdoptPolicy(policyID) 校验政策采纳，过滤 PolicyBranchType == nil 的
+--      自动赠予开/关门政策，并按 GetNumCities() > 0 守卫无城阶段；
+--   2. 纯只读、零 UI 选区副作用、零跨调用缓存，可安全在 AI 回合白名单放行。
+-- 输入：activePlayerID（当前玩家 ID）。
+-- 输出：PolicyOptionsDTO 表（带 __is_object = true）；非法/非存活玩家返回错误表。
+-- -----------------------------------------------------------------------------
+function CAB_Collector.GetPolicyOptions(activePlayerID)
+    local pPlayer, errMsg = isValidAlivePlayer(activePlayerID)
+    if pPlayer == nil then
+        return makeErrorDto(errMsg)
+    end
+
+    local activeTeam = pPlayer:GetTeam()
+    local pActiveTeam = (Teams ~= nil and activeTeam ~= nil and activeTeam >= 0) and Teams[activeTeam] or nil
+    local currentEra = (pActiveTeam ~= nil and pActiveTeam.GetCurrentEra ~= nil and pActiveTeam:GetCurrentEra()) or 0
+
+    local policiesDisabled = isGameOptionEnabled("GAMEOPTION_NO_POLICIES")
+    local religionDisabled = isGameOptionEnabled("GAMEOPTION_NO_RELIGION")
+
+    local culture = (pPlayer.GetJONSCulture ~= nil and pPlayer:GetJONSCulture()) or 0
+    local culturePerTurn = (pPlayer.GetTotalJONSCulturePerTurn ~= nil and pPlayer:GetTotalJONSCulturePerTurn()) or 0
+    local nextPolicyCost = (pPlayer.GetNextPolicyCost ~= nil and pPlayer:GetNextPolicyCost()) or 0
+    local freePolicies = (pPlayer.GetNumFreePolicies ~= nil and pPlayer:GetNumFreePolicies()) or 0
+    local freeTenets = (pPlayer.GetNumFreeTenets ~= nil and pPlayer:GetNumFreeTenets()) or 0
+    local numCities = (pPlayer.GetNumCities ~= nil and pPlayer:GetNumCities()) or 0
+
+    local ideologyBranchId = (pPlayer.GetLateGamePolicyTree ~= nil and pPlayer:GetLateGamePolicyTree()) or -1
+    local ideologyBranchType = nil
+    if type(ideologyBranchId) == "number" and ideologyBranchId >= 0
+        and GameInfo ~= nil and GameInfo.PolicyBranchTypes ~= nil
+    then
+        local iRow = GameInfo.PolicyBranchTypes[ideologyBranchId]
+        if iRow ~= nil and iRow.Type ~= nil and iRow.Type ~= "" then
+            ideologyBranchType = iRow.Type
+        end
+    else
+        ideologyBranchId = -1
+    end
+
+    local policyBranches = {}
+    local unlockableBranches = {}
+
+    if GameInfo ~= nil and GameInfo.PolicyBranchTypes ~= nil then
+        for branch in GameInfo.PolicyBranchTypes() do
+            if branch ~= nil and branch.ID ~= nil and branch.Type ~= nil and branch.Type ~= ""
+                and branch.PurchaseByLevel ~= true
+            then
+                local branchId = branch.ID
+                local unlocked = (pPlayer.IsPolicyBranchUnlocked ~= nil and pPlayer:IsPolicyBranchUnlocked(branchId) == true) or false
+                local finished = (pPlayer.IsPolicyBranchFinished ~= nil and pPlayer:IsPolicyBranchFinished(branchId) == true) or false
+                local blocked = (pPlayer.IsPolicyBranchBlocked ~= nil and pPlayer:IsPolicyBranchBlocked(branchId) == true) or false
+
+                local eraPrereq = (type(branch.EraPrereq) == "string" and branch.EraPrereq ~= "") and branch.EraPrereq or nil
+                local eraMet = true
+                if eraPrereq ~= nil and GameInfoTypes ~= nil and type(GameInfoTypes[eraPrereq]) == "number" then
+                    eraMet = (currentEra >= GameInfoTypes[eraPrereq])
+                end
+
+                local lockedByReligion = (branch.LockedWithoutReligion == true and religionDisabled)
+                local canUnlockNow = false
+                if (not policiesDisabled) and numCities > 0 and (not unlocked) and (not blocked)
+                    and (not lockedByReligion) and pPlayer.CanUnlockPolicyBranch ~= nil
+                then
+                    local okU, resU = pcall(pPlayer.CanUnlockPolicyBranch, pPlayer, branchId)
+                    canUnlockNow = (okU and resU == true)
+                end
+
+                table.insert(policyBranches, {
+                    __is_object = true,
+                    branch_id = branchId,
+                    branch_type = branch.Type,
+                    name = safeLocale(branch.Description or branch.Type),
+                    era_prereq = eraPrereq,
+                    era_met = eraMet,
+                    unlocked = unlocked,
+                    finished = finished,
+                    blocked = blocked,
+                    can_unlock_now = canUnlockNow,
+                })
+
+                if canUnlockNow then
+                    table.insert(unlockableBranches, {
+                        __is_object = true,
+                        branch_id = branchId,
+                        branch_type = branch.Type,
+                        name = safeLocale(branch.Description or branch.Type),
+                        help = safeLocale(branch.Help or branch.Description or branch.Type),
+                    })
+                end
+            end
+        end
+    end
+
+    local adoptablePolicies = {}
+    local adoptedPolicies = {}
+    local addedAdoptableIds = {}
+
+    if GameInfo ~= nil and GameInfo.Policies ~= nil then
+        for policy in GameInfo.Policies() do
+            if policy ~= nil and policy.ID ~= nil and policy.Type ~= nil and policy.Type ~= ""
+                and type(policy.PolicyBranchType) == "string" and policy.PolicyBranchType ~= ""
+            then
+                local policyId = policy.ID
+                local owned = (pPlayer.HasPolicy ~= nil and pPlayer:HasPolicy(policyId) == true) or false
+                if owned then
+                    table.insert(adoptedPolicies, policy.Type)
+                elseif (not policiesDisabled) and numCities > 0 then
+                    local branchRow = (GameInfo.PolicyBranchTypes ~= nil)
+                        and GameInfo.PolicyBranchTypes[policy.PolicyBranchType] or nil
+                    local isIdeologyPolicy = (branchRow ~= nil and branchRow.PurchaseByLevel == true)
+                    if not isIdeologyPolicy then
+                        local blocked = (pPlayer.IsPolicyBlocked ~= nil and pPlayer:IsPolicyBlocked(policyId) == true) or false
+                        if (not blocked) and pPlayer.CanAdoptPolicy ~= nil then
+                            local okA, resA = pcall(pPlayer.CanAdoptPolicy, pPlayer, policyId)
+                            if okA and resA == true then
+                                addedAdoptableIds[policyId] = true
+                                table.insert(adoptablePolicies, {
+                                    __is_object = true,
+                                    policy_id = policyId,
+                                    policy_type = policy.Type,
+                                    name = safeLocale(policy.Description or policy.Type),
+                                    branch_type = policy.PolicyBranchType,
+                                    is_tenet = false,
+                                    level = 0,
+                                    help = safeLocale(policy.Help or ""),
+                                })
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    -- 已选定后期意识形态且具备采纳资源时，按 SocialPolicyPopup.lua:551-655, 795 枚举当前可采纳信条
+    local hasTenetBudget = (freePolicies > 0 or freeTenets > 0 or culture >= nextPolicyCost)
+    if ideologyBranchId >= 0 and (not policiesDisabled) and numCities > 0
+        and hasTenetBudget and pPlayer.GetAvailableTenets ~= nil
+        and GameInfo ~= nil and GameInfo.Policies ~= nil
+    then
+        local slotOpen = { [1] = true, [2] = true, [3] = true }
+        if pPlayer.GetTenet ~= nil then
+            local l1Count, l2Count, l3Count = 0, 0, 0
+            for idx = 1, 7 do
+                local okT, tid = pcall(pPlayer.GetTenet, pPlayer, ideologyBranchId, 1, idx)
+                if okT and type(tid) == "number" and tid >= 0 then
+                    l1Count = l1Count + 1
+                end
+            end
+            for idx = 1, 4 do
+                local okT, tid = pcall(pPlayer.GetTenet, pPlayer, ideologyBranchId, 2, idx)
+                if okT and type(tid) == "number" and tid >= 0 then
+                    l2Count = l2Count + 1
+                end
+            end
+            for idx = 1, 3 do
+                local okT, tid = pcall(pPlayer.GetTenet, pPlayer, ideologyBranchId, 3, idx)
+                if okT and type(tid) == "number" and tid >= 0 then
+                    l3Count = l3Count + 1
+                end
+            end
+            slotOpen[1] = (l1Count < 7)
+            slotOpen[2] = (l2Count < 4) and (l1Count >= l2Count + 2)
+            slotOpen[3] = (l3Count < 3) and (l2Count >= l3Count + 2)
+        end
+
+        for lvl = 1, 3 do
+            if slotOpen[lvl] then
+                local okList, tenetList = pcall(pPlayer.GetAvailableTenets, pPlayer, lvl)
+                if okList and type(tenetList) == "table" then
+                    for _, tenetId in ipairs(tenetList) do
+                        if type(tenetId) == "number" and tenetId >= 0 and not addedAdoptableIds[tenetId] then
+                            local owned = (pPlayer.HasPolicy ~= nil and pPlayer:HasPolicy(tenetId) == true) or false
+                            local tenetRow = GameInfo.Policies[tenetId]
+                            if (not owned) and tenetRow ~= nil and tenetRow.Type ~= nil and tenetRow.Type ~= "" then
+                                addedAdoptableIds[tenetId] = true
+                                table.insert(adoptablePolicies, {
+                                    __is_object = true,
+                                    policy_id = tenetId,
+                                    policy_type = tenetRow.Type,
+                                    name = safeLocale(tenetRow.Description or tenetRow.Type),
+                                    branch_type = tenetRow.PolicyBranchType or ideologyBranchType or "",
+                                    is_tenet = true,
+                                    level = lvl,
+                                    help = safeLocale(tenetRow.Help or ""),
+                                })
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    local canAdoptNow = (not policiesDisabled)
+        and numCities > 0
+        and (freePolicies > 0 or culture >= nextPolicyCost or (ideologyBranchId >= 0 and freeTenets > 0))
+
+    return {
+        __is_object = true,
+        policies_disabled = policiesDisabled,
+        culture = culture,
+        culture_per_turn = culturePerTurn,
+        next_policy_cost = nextPolicyCost,
+        free_policies = freePolicies,
+        free_tenets = freeTenets,
+        num_cities = numCities,
+        can_adopt_now = canAdoptNow,
+        ideology_branch_id = (ideologyBranchId >= 0) and ideologyBranchId or nil,
+        ideology_branch_type = ideologyBranchType,
+        policy_branches = policyBranches,
+        unlockable_branches = unlockableBranches,
+        adoptable_policies = adoptablePolicies,
+        adopted_policies = adoptedPolicies,
+    }
+end
+
+-- -----------------------------------------------------------------------------
+-- 函数：CAB_Collector.GetUnitPromotions(activePlayerID, unitID)  [F10]
+-- 做什么：采集指定己方存活单位的经验、等级、晋升就绪态、已获得晋升与当前可获取晋升清单，
+--         供智能体处理 ENDTURN_BLOCKING_UNIT_PROMOTION。
+-- 为什么：
+--   1. 直接调用 CvGameCore_Expansion2.dll 原生 Unit 只读方法（IsPromotionReady / CanPromote /
+--      CanAcquirePromotion / IsHasPromotion / GetExperience / ExperienceNeeded / GetLevel），
+--      全程零 UI.SelectUnit 选区副作用，因此可安全纳入 AI 回合只读白名单；
+--   2. 严格区分常规晋升与 InstaHeal 立即回血晋升（满血单位不展示 InstaHeal），零缓存。
+-- 输入：activePlayerID（当前存活玩家 ID）、unitID（己方单位整数 ID）。
+-- 输出：UnitPromotionsDTO 表（带 __is_object = true）；非法/死亡/非己方单位返回错误表。
+-- -----------------------------------------------------------------------------
+function CAB_Collector.GetUnitPromotions(activePlayerID, unitID)
+    local pPlayer, errMsg = isValidAlivePlayer(activePlayerID)
+    if pPlayer == nil then
+        return makeErrorDto(errMsg)
+    end
+    if not isInteger(unitID) then
+        return makeErrorDto("Invalid unit ID: " .. tostring(unitID))
+    end
+
+    local pUnit = pPlayer:GetUnitByID(unitID)
+    if not isUnitAlive(pUnit) or pUnit:GetOwner() ~= activePlayerID then
+        return makeErrorDto("Unit not found or dead: " .. tostring(unitID))
+    end
+
+    local maxHp = getMaxUnitHp(pUnit)
+    local damage = pUnit:GetDamage() or 0
+    local hp = math.max(0, maxHp - damage)
+    local level = (pUnit.GetLevel ~= nil and pUnit:GetLevel()) or 1
+    local xp = (pUnit.GetExperience ~= nil and pUnit:GetExperience()) or 0
+    local xpNeeded = (pUnit.ExperienceNeeded ~= nil and pUnit:ExperienceNeeded()) or 0
+
+    local isReady = false
+    if pUnit.IsPromotionReady ~= nil then
+        local okR, resR = pcall(pUnit.IsPromotionReady, pUnit)
+        isReady = (okR and resR == true)
+    end
+
+    local canPromote = isReady
+    if pUnit.CanPromote ~= nil then
+        local okP, resP = pcall(pUnit.CanPromote, pUnit)
+        if okP then
+            canPromote = (resP == true)
+        end
+    end
+
+    local earnedPromotions = {}
+    local availablePromotions = {}
+
+    if GameInfo ~= nil and GameInfo.UnitPromotions ~= nil then
+        for promo in GameInfo.UnitPromotions() do
+            if promo ~= nil and promo.ID ~= nil and promo.Type ~= nil and promo.Type ~= "" then
+                local promoId = promo.ID
+                local hasPromo = false
+                if pUnit.IsHasPromotion ~= nil then
+                    local okH, resH = pcall(pUnit.IsHasPromotion, pUnit, promoId)
+                    hasPromo = (okH and resH == true)
+                end
+
+                if hasPromo then
+                    table.insert(earnedPromotions, {
+                        __is_object = true,
+                        promotion_id = promoId,
+                        promotion_type = promo.Type,
+                        name = safeLocale(promo.Description or promo.Type),
+                        help = safeLocale(promo.Help or ""),
+                    })
+                end
+
+                if isReady and promo.CannotBeChosen ~= true and pUnit.CanAcquirePromotion ~= nil then
+                    local okAcq, canAcq = pcall(pUnit.CanAcquirePromotion, pUnit, promoId)
+                    if okAcq and canAcq == true then
+                        local isInstaHeal = (promo.InstaHeal == true)
+                        if (not isInstaHeal) or damage > 0 then
+                            table.insert(availablePromotions, {
+                                __is_object = true,
+                                promotion_id = promoId,
+                                promotion_type = promo.Type,
+                                name = safeLocale(promo.Description or promo.Type),
+                                help = safeLocale(promo.Help or ""),
+                                is_insta_heal = isInstaHeal,
+                            })
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    return {
+        __is_object = true,
+        unit_id = pUnit:GetID(),
+        unit_type = resolveUnitTypeStr(pUnit:GetUnitType()),
+        name = safeLocale(pUnit:GetName()),
+        hp = hp,
+        max_hp = maxHp,
+        level = level,
+        experience = xp,
+        experience_needed = xpNeeded,
+        is_promotion_ready = isReady,
+        can_promote = canPromote,
+        earned_promotions = earnedPromotions,
+        available_promotions = availablePromotions,
     }
 end

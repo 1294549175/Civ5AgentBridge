@@ -123,6 +123,16 @@ local ENUMS = {
     ControlTypes = {
         CONTROL_ENDTURN = 0,
     },
+    GameOptionTypes = {
+        GAMEOPTION_NO_SCIENCE = 0,
+        GAMEOPTION_NO_POLICIES = 1,
+        GAMEOPTION_NO_RELIGION = 2,
+    },
+    ActionSubTypes = {
+        ACTIONSUBTYPE_MISSION = 0,
+        ACTIONSUBTYPE_COMMAND = 1,
+        ACTIONSUBTYPE_PROMOTION = 2,
+    },
 }
 
 for i, name in ipairs(ENDTURN_BLOCKING_NAMES) do
@@ -191,6 +201,47 @@ local DEFAULT_INFO_ROWS = {
         { Type = "PROCESS_WEALTH",   Description = "TXT_KEY_PROCESS_WEALTH" },
         { Type = "PROCESS_RESEARCH", Description = "TXT_KEY_PROCESS_RESEARCH" },
     },
+    Eras = {
+        { Type = "ERA_ANCIENT",     Description = "TXT_KEY_ERA_ANCIENT" },
+        { Type = "ERA_CLASSICAL",   Description = "TXT_KEY_ERA_CLASSICAL" },
+        { Type = "ERA_MEDIEVAL",    Description = "TXT_KEY_ERA_MEDIEVAL" },
+        { Type = "ERA_RENAISSANCE", Description = "TXT_KEY_ERA_RENAISSANCE" },
+        { Type = "ERA_INDUSTRIAL",  Description = "TXT_KEY_ERA_INDUSTRIAL" },
+        { Type = "ERA_MODERN",      Description = "TXT_KEY_ERA_MODERN" },
+    },
+    Technologies = {
+        { Type = "TECH_AGRICULTURE",      Description = "TXT_KEY_TECH_AGRICULTURE",      Era = "ERA_ANCIENT", Cost = 20,   GridX = 0, GridY = 5 },
+        { Type = "TECH_POTTERY",          Description = "TXT_KEY_TECH_POTTERY",          Era = "ERA_ANCIENT", Cost = 35,   GridX = 1, GridY = 1 },
+        { Type = "TECH_ANIMAL_HUSBANDRY", Description = "TXT_KEY_TECH_ANIMAL_HUSBANDRY", Era = "ERA_ANCIENT", Cost = 35,   GridX = 1, GridY = 4 },
+        { Type = "TECH_ARCHERY",          Description = "TXT_KEY_TECH_ARCHERY",          Era = "ERA_ANCIENT", Cost = 35,   GridX = 1, GridY = 6 },
+        { Type = "TECH_MINING",           Description = "TXT_KEY_TECH_MINING",           Era = "ERA_ANCIENT", Cost = 35,   GridX = 1, GridY = 8 },
+        { Type = "TECH_WRITING",          Description = "TXT_KEY_TECH_WRITING",          Era = "ERA_ANCIENT", Cost = 55,   GridX = 2, GridY = 2 },
+        { Type = "TECH_FUTURE_TECH",      Description = "TXT_KEY_TECH_FUTURE_TECH",      Era = "ERA_MODERN",  Cost = 9500, GridX = 17, GridY = 5, Repeat = true },
+    },
+    PolicyBranchTypes = {
+        { Type = "POLICY_BRANCH_TRADITION",   Description = "TXT_KEY_POLICY_BRANCH_TRADITION",   Help = "TXT_KEY_POLICY_BRANCH_TRADITION_HELP" },
+        { Type = "POLICY_BRANCH_LIBERTY",     Description = "TXT_KEY_POLICY_BRANCH_LIBERTY",     Help = "TXT_KEY_POLICY_BRANCH_LIBERTY_HELP" },
+        { Type = "POLICY_BRANCH_HONOR",       Description = "TXT_KEY_POLICY_BRANCH_HONOR",       Help = "TXT_KEY_POLICY_BRANCH_HONOR_HELP" },
+        { Type = "POLICY_BRANCH_PIETY",       Description = "TXT_KEY_POLICY_BRANCH_PIETY",       Help = "TXT_KEY_POLICY_BRANCH_PIETY_HELP", LockedWithoutReligion = true },
+        { Type = "POLICY_BRANCH_RATIONALISM", Description = "TXT_KEY_POLICY_BRANCH_RATIONALISM", Help = "TXT_KEY_POLICY_BRANCH_RATIONALISM_HELP", EraPrereq = "ERA_RENAISSANCE" },
+        { Type = "POLICY_BRANCH_FREEDOM",     Description = "TXT_KEY_POLICY_BRANCH_FREEDOM",     Help = "TXT_KEY_POLICY_BRANCH_FREEDOM_HELP", PurchaseByLevel = true },
+    },
+    Policies = {
+        { Type = "POLICY_TRADITION",         Description = "TXT_KEY_POLICY_TRADITION",         Help = "TXT_KEY_POLICY_TRADITION_HELP" },
+        { Type = "POLICY_ARISTOCRACY",       Description = "TXT_KEY_POLICY_ARISTOCRACY",       Help = "TXT_KEY_POLICY_ARISTOCRACY_HELP",       PolicyBranchType = "POLICY_BRANCH_TRADITION" },
+        { Type = "POLICY_OLIGARCHY",         Description = "TXT_KEY_POLICY_OLIGARCHY",         Help = "TXT_KEY_POLICY_OLIGARCHY_HELP",         PolicyBranchType = "POLICY_BRANCH_TRADITION" },
+        { Type = "POLICY_LEGALISM",          Description = "TXT_KEY_POLICY_LEGALISM",          Help = "TXT_KEY_POLICY_LEGALISM_HELP",          PolicyBranchType = "POLICY_BRANCH_TRADITION" },
+        { Type = "POLICY_REPUBLIC",          Description = "TXT_KEY_POLICY_REPUBLIC",          Help = "TXT_KEY_POLICY_REPUBLIC_HELP",          PolicyBranchType = "POLICY_BRANCH_LIBERTY" },
+        { Type = "POLICY_AVANT_GARDE",       Description = "TXT_KEY_POLICY_AVANT_GARDE",       Help = "TXT_KEY_POLICY_AVANT_GARDE_HELP",       PolicyBranchType = "POLICY_BRANCH_FREEDOM", Level = 1 },
+        { Type = "POLICY_UNIVERSAL_SUFFRAGE",Description = "TXT_KEY_POLICY_UNIVERSAL_SUFFRAGE",Help = "TXT_KEY_POLICY_UNIVERSAL_SUFFRAGE_HELP",PolicyBranchType = "POLICY_BRANCH_FREEDOM", Level = 2 },
+    },
+    UnitPromotions = {
+        { Type = "PROMOTION_SHOCK_1",     Description = "TXT_KEY_PROMOTION_SHOCK_1",     Help = "TXT_KEY_PROMOTION_SHOCK_1_HELP" },
+        { Type = "PROMOTION_DRILL_1",     Description = "TXT_KEY_PROMOTION_DRILL_1",     Help = "TXT_KEY_PROMOTION_DRILL_1_HELP" },
+        { Type = "PROMOTION_SHOCK_2",     Description = "TXT_KEY_PROMOTION_SHOCK_2",     Help = "TXT_KEY_PROMOTION_SHOCK_2_HELP" },
+        { Type = "PROMOTION_INSTA_HEAL",  Description = "TXT_KEY_PROMOTION_INSTA_HEAL",  Help = "TXT_KEY_PROMOTION_INSTA_HEAL_HELP", InstaHeal = true },
+        { Type = "PROMOTION_EMBARKATION", Description = "TXT_KEY_PROMOTION_EMBARKATION", Help = "TXT_KEY_PROMOTION_EMBARKATION_HELP", CannotBeChosen = true },
+    },
 }
 
 local DEFAULT_ACTION_ROWS = {
@@ -200,6 +251,10 @@ local DEFAULT_ACTION_ROWS = {
     { Type = "MISSION_HEAL",                     SubType = "ACTIONSUBTYPE_MISSION", Visible = true },
     { Type = "MISSION_SKIP",                     SubType = "ACTIONSUBTYPE_MISSION", Visible = true },
     { Type = "MISSION_SET_UP_FOR_RANGED_ATTACK", SubType = "ACTIONSUBTYPE_MISSION", Visible = true },
+    { Type = "PROMOTION_SHOCK_1",                SubType = ENUMS.ActionSubTypes.ACTIONSUBTYPE_PROMOTION, CommandData = 0, Visible = true },
+    { Type = "PROMOTION_DRILL_1",                SubType = ENUMS.ActionSubTypes.ACTIONSUBTYPE_PROMOTION, CommandData = 1, Visible = true },
+    { Type = "PROMOTION_SHOCK_2",                SubType = ENUMS.ActionSubTypes.ACTIONSUBTYPE_PROMOTION, CommandData = 2, Visible = true },
+    { Type = "PROMOTION_INSTA_HEAL",             SubType = ENUMS.ActionSubTypes.ACTIONSUBTYPE_PROMOTION, CommandData = 3, Visible = true },
 }
 
 -- -----------------------------------------------------------------------------
@@ -261,6 +316,8 @@ TaskTypes = ENUMS.TaskTypes
 OrderTypes = ENUMS.OrderTypes
 CityUpdateTypes = ENUMS.CityUpdateTypes
 ControlTypes = ENUMS.ControlTypes
+GameOptionTypes = ENUMS.GameOptionTypes
+ActionSubTypes = ENUMS.ActionSubTypes
 
 function S.resetGameDefines(overrides)
     GameDefines = GameDefines or {}
@@ -540,9 +597,13 @@ local function applyPatch(targetState, patch, fields, label)
     end
 end
 
-local TEAM_FIELDS = fieldSet({ "id", "atWar", "peaceTreaty", "canDeclareWar" }, {
+local TEAM_FIELDS = fieldSet({ "id", "atWar", "peaceTreaty", "canDeclareWar", "currentEra", "techs", "techProgress", "techCosts" }, {
     atWar = {},
     peaceTreaty = {},
+    currentEra = 0,
+    techs = {},
+    techProgress = {},
+    techCosts = {},
 })
 
 local PLAYER_FIELDS = fieldSet({
@@ -551,12 +612,24 @@ local PLAYER_FIELDS = fieldSet({
     "gold", "goldRate", "science", "culturePerTurn", "faith", "faithPerTurn", "happiness",
     "resourcesAvailable", "resourcesTotal",
     "blockingType", "blockingNotificationIndex", "notifications",
+    "currentResearch", "freeTechs", "overflowResearch", "canResearch", "canResearchForFree",
+    "researchProgress", "researchCosts", "researchTurnsLeft",
+    "culture", "nextPolicyCost", "freePolicies", "freeTenets", "ideologyBranch",
+    "unlockedBranches", "finishedBranches", "blockedBranches", "canUnlockBranch",
+    "policies", "blockedPolicies", "canAdoptPolicy", "canAdoptPolicyIgnoreCost",
+    "tenets", "availableTenets",
 }, {
     alive = true, team = 0, minor = false, barbarian = false, human = true,
     turnActive = true, goldenAge = false,
     gold = 0, goldRate = 0, science = 0, culturePerTurn = 0, faith = 0, faithPerTurn = 0, happiness = 0,
     resourcesAvailable = {}, resourcesTotal = {},
     blockingType = -1, blockingNotificationIndex = -1, notifications = {},
+    currentResearch = -1, freeTechs = 0, overflowResearch = 0, canResearch = {},
+    researchProgress = {}, researchCosts = {}, researchTurnsLeft = {},
+    culture = 0, nextPolicyCost = 25, freePolicies = 0, freeTenets = 0, ideologyBranch = -1,
+    unlockedBranches = {}, finishedBranches = {}, blockedBranches = {}, canUnlockBranch = {},
+    policies = {}, blockedPolicies = {}, canAdoptPolicy = {}, canAdoptPolicyIgnoreCost = {},
+    tenets = {}, availableTenets = {},
 })
 
 local UNIT_FIELDS = fieldSet({
@@ -568,12 +641,14 @@ local UNIT_FIELDS = fieldSet({
     "canRangeStrike", "canRangeStrikeAt", "canMoveThrough", "canAttack", "canFortify", "canHeal",
     "mustSetUp", "everFortifyable", "canHandleActions",
     "busyTicks", "fightingTicks", "visionRange", "onMove", "combatOutcome",
+    "level", "experience", "experienceNeeded", "canPromote", "promotions", "availablePromotions",
 }, {
     damage = 0, fortifyTurns = 0, promotionReady = false, automated = false, delayedDeath = false,
     dead = false, embarked = false, invisibleTo = {},
     canRangeStrike = false, canRangeStrikeAt = false, canMoveThrough = false,
     canFortify = false, canHeal = false, mustSetUp = false, canHandleActions = {},
     busyTicks = 0, fightingTicks = 0, visionRange = 2,
+    level = 1, experience = 0, experienceNeeded = 10, promotions = {}, availablePromotions = {},
 })
 
 local CITY_FIELDS = fieldSet({
@@ -822,6 +897,21 @@ UnitMethods.IsReadyToMove = function(u)
     return u._s.moves > 0
 end
 UnitMethods.IsPromotionReady = function(u) return u._s.promotionReady == true end
+UnitMethods.CanPromote = function(u)
+    if u._s.canPromote ~= nil then return u._s.canPromote == true end
+    return u._s.promotionReady == true
+end
+UnitMethods.GetLevel = function(u) return u._s.level or 1 end
+UnitMethods.GetExperience = function(u) return u._s.experience or 0 end
+UnitMethods.ExperienceNeeded = function(u) return u._s.experienceNeeded or 10 end
+UnitMethods.IsHasPromotion = function(u, promoId) return u._s.promotions[promoId] == true end
+UnitMethods.CanAcquirePromotion = function(u, promoId)
+    local row = u._w.info.UnitPromotions and u._w.info.UnitPromotions[promoId] or nil
+    if row == nil or row.CannotBeChosen == true then return false end
+    if row.InstaHeal ~= true and u._s.promotions[promoId] == true then return false end
+    if row.InstaHeal == true and (u._s.damage or 0) <= 0 then return false end
+    return decide(u._s.availablePromotions, u, promoId, promoId)
+end
 UnitMethods.IsAutomated = function(u) return u._s.automated == true end
 UnitMethods.IsDelayedDeath = function(u) return u._s.delayedDeath == true end
 UnitMethods.IsDead = function(u) return u._s.dead == true end
@@ -1059,10 +1149,119 @@ PlayerMethods.GetFirstReadyUnit = function(p)
     end
     return nil
 end
+PlayerMethods.GetNumCities = function(p)
+    local list = p._w.citiesByPlayer[p._s.id]
+    return (list ~= nil) and #list or 0
+end
+PlayerMethods.GetCurrentResearch = function(p) return p._s.currentResearch end
+PlayerMethods.GetNumFreeTechs = function(p) return p._s.freeTechs or 0 end
+PlayerMethods.GetOverflowResearch = function(p) return p._s.overflowResearch or 0 end
+PlayerMethods.CanResearch = function(p, techId)
+    local team = p._w.teams[p._s.team]
+    local row = p._w.info.Technologies and p._w.info.Technologies[techId] or nil
+    if row == nil then return false end
+    if team ~= nil and team._s.techs[techId] == true and row.Repeat ~= true then return false end
+    return decide(p._s.canResearch, p, techId, techId)
+end
+PlayerMethods.CanResearchForFree = function(p, techId)
+    if p._s.canResearchForFree ~= nil then
+        return decide(p._s.canResearchForFree, p, techId, techId)
+    end
+    return p:CanResearch(techId)
+end
+PlayerMethods.GetResearchCost = function(p, techId)
+    if p._s.researchCosts[techId] ~= nil then return p._s.researchCosts[techId] end
+    local team = p._w.teams[p._s.team]
+    if team ~= nil and team._s.techCosts[techId] ~= nil then return team._s.techCosts[techId] end
+    local row = p._w.info.Technologies and p._w.info.Technologies[techId] or nil
+    return (row ~= nil and row.Cost) or 0
+end
+PlayerMethods.GetResearchProgress = function(p, techId)
+    if p._s.researchProgress[techId] ~= nil then return p._s.researchProgress[techId] end
+    local team = p._w.teams[p._s.team]
+    if team ~= nil and team._s.techProgress[techId] ~= nil then return team._s.techProgress[techId] end
+    return 0
+end
+PlayerMethods.GetResearchTurnsLeft = function(p, techId)
+    if p._s.researchTurnsLeft[techId] ~= nil then return p._s.researchTurnsLeft[techId] end
+    local sci = p._s.science or 0
+    if sci <= 0 then return 0 end
+    local rem = math.max(0, p:GetResearchCost(techId) - p:GetResearchProgress(techId))
+    return math.max(1, math.ceil(rem / sci))
+end
+PlayerMethods.GetJONSCulture = function(p) return p._s.culture or 0 end
+PlayerMethods.GetNextPolicyCost = function(p) return p._s.nextPolicyCost or 25 end
+PlayerMethods.GetNumFreePolicies = function(p) return p._s.freePolicies or 0 end
+PlayerMethods.GetNumFreeTenets = function(p) return p._s.freeTenets or 0 end
+PlayerMethods.GetLateGamePolicyTree = function(p) return p._s.ideologyBranch or -1 end
+PlayerMethods.IsPolicyBranchUnlocked = function(p, branchId) return p._s.unlockedBranches[branchId] == true end
+PlayerMethods.IsPolicyBranchFinished = function(p, branchId) return p._s.finishedBranches[branchId] == true end
+PlayerMethods.IsPolicyBranchBlocked = function(p, branchId) return p._s.blockedBranches[branchId] == true end
+PlayerMethods.CanUnlockPolicyBranch = function(p, branchId)
+    if p:GetNumCities() <= 0 then return false end
+    if p._s.unlockedBranches[branchId] == true or p._s.blockedBranches[branchId] == true then return false end
+    if p._s.canUnlockBranch ~= nil and type(p._s.canUnlockBranch) == "table" and next(p._s.canUnlockBranch) ~= nil then
+        return decide(p._s.canUnlockBranch, p, branchId, branchId)
+    end
+    local branchRow = p._w.info.PolicyBranchTypes and p._w.info.PolicyBranchTypes[branchId] or nil
+    if branchRow == nil or branchRow.PurchaseByLevel == true then return false end
+    if branchRow.EraPrereq ~= nil and GameInfoTypes[branchRow.EraPrereq] ~= nil then
+        local team = p._w.teams[p._s.team]
+        if (team and team._s.currentEra or 0) < GameInfoTypes[branchRow.EraPrereq] then return false end
+    end
+    return (p._s.freePolicies or 0) > 0 or (p._s.culture or 0) >= (p._s.nextPolicyCost or 25)
+end
+PlayerMethods.HasPolicy = function(p, policyId) return p._s.policies[policyId] == true end
+PlayerMethods.IsPolicyBlocked = function(p, policyId) return p._s.blockedPolicies[policyId] == true end
+PlayerMethods.CanAdoptPolicy = function(p, policyId, ignoreCost)
+    if p:GetNumCities() <= 0 then return false end
+    if p._s.policies[policyId] == true or p._s.blockedPolicies[policyId] == true then return false end
+    if ignoreCost == true and type(p._s.canAdoptPolicyIgnoreCost) == "table" and next(p._s.canAdoptPolicyIgnoreCost) ~= nil then
+        return decide(p._s.canAdoptPolicyIgnoreCost, p, policyId, policyId)
+    end
+    if type(p._s.canAdoptPolicy) == "table" and next(p._s.canAdoptPolicy) ~= nil then
+        if ignoreCost == true then
+            return decide(p._s.canAdoptPolicy, p, policyId, policyId)
+        end
+        return decide(p._s.canAdoptPolicy, p, policyId, policyId)
+            and ((p._s.freePolicies or 0) > 0 or (p._s.culture or 0) >= (p._s.nextPolicyCost or 25))
+    end
+    return false
+end
+PlayerMethods.GetTenet = function(p, ideologyId, level, index)
+    if ideologyId ~= p._s.ideologyBranch then return -1 end
+    local lvlTbl = p._s.tenets and p._s.tenets[level] or nil
+    if lvlTbl == nil or lvlTbl[index] == nil then return -1 end
+    return lvlTbl[index]
+end
+PlayerMethods.GetAvailableTenets = function(p, level)
+    local out = {}
+    local list = p._s.availableTenets and p._s.availableTenets[level] or nil
+    if type(list) == "table" then
+        for _, tid in ipairs(list) do
+            if p._s.policies[tid] ~= true then
+                table.insert(out, tid)
+            end
+        end
+    end
+    return out
+end
 
 local TeamMethods = {}
 
 TeamMethods.IsAtWar = function(t, otherTeam) return t._s.atWar[otherTeam] == true end
+TeamMethods.GetCurrentEra = function(t) return t._s.currentEra or 0 end
+TeamMethods.GetTeamTechs = function(t)
+    return setmetatable({
+        HasTech = function(_, techId) return t._s.techs[techId] == true end,
+        GetResearchCost = function(_, techId)
+            if t._s.techCosts[techId] ~= nil then return t._s.techCosts[techId] end
+            local row = t._w.info.Technologies and t._w.info.Technologies[techId] or nil
+            return (row ~= nil and row.Cost) or 0
+        end,
+        GetResearchProgress = function(_, techId) return t._s.techProgress[techId] or 0 end,
+    }, { __index = function(_, key) return unknownMember("TeamTechs", key) end })
+end
 TeamMethods.CanDeclareWar = function(t, otherTeam)
     if t._s.canDeclareWar ~= nil then
         return decide(t._s.canDeclareWar, t, otherTeam, otherTeam)
@@ -1278,6 +1477,7 @@ local function makeGame(w)
         GetActivePlayer = function() return w.activePlayer end,
         GetActiveTeam = function() return S.visionTeamOf(w) end,
         IsDebugMode = function() return false end,
+        IsOption = function(optId) return w.gameOptions[optId] == true end,
         GetResourceUsageType = function(resourceID)
             local row = w.info.Resources[resourceID]
             if row == nil then return -1 end
@@ -1289,6 +1489,10 @@ local function makeGame(w)
             local head = w.ui.headUnit
             S.record(w, { name = "CanHandleAction", args = { iAction, ... }, actionType = actionType })
             if head == nil or head._s.dead or actionType == nil then return false end
+            if action.SubType == ActionSubTypes.ACTIONSUBTYPE_PROMOTION then
+                if head._s.canHandleActions[actionType] == false then return false end
+                return head._s.promotionReady == true and head:CanAcquirePromotion(action.CommandData) == true
+            end
             return head._s.canHandleActions[actionType] == true
         end,
         SelectionListMove = function(pTargetPlot, bShift, bCtrl, bAlt)
@@ -1348,6 +1552,45 @@ local function makeGame(w)
                 actionType = actionType,
             })
             if head == nil or head._s.dead then return end
+            if action ~= nil and action.SubType == ActionSubTypes.ACTIONSUBTYPE_PROMOTION then
+                local unitRef = head
+                local promoId = action.CommandData
+                local promoRow = w.info.UnitPromotions and w.info.UnitPromotions[promoId] or nil
+                local applyFn = function()
+                    if unitRef._s.dead then return end
+                    unitRef._s.level = (unitRef._s.level or 1) + 1
+                    unitRef._s.promotionReady = false
+                    if promoRow ~= nil and promoRow.InstaHeal == true then
+                        unitRef._s.damage = math.max(0, (unitRef._s.damage or 0) - 50)
+                    else
+                        unitRef._s.promotions[promoId] = true
+                        if type(unitRef._s.availablePromotions) == "table" then
+                            unitRef._s.availablePromotions[promoId] = nil
+                        end
+                    end
+                    local ownerPlayer = w.players[unitRef._s.owner]
+                    if ownerPlayer ~= nil
+                        and ownerPlayer._s.blockingType == EndTurnBlockingTypes.ENDTURN_BLOCKING_UNIT_PROMOTION
+                    then
+                        local anyPromo = false
+                        for _, u in ipairs(w.unitsByPlayer[unitRef._s.owner] or {}) do
+                            if (not u._s.dead) and u._s.promotionReady == true then
+                                anyPromo = true
+                                break
+                            end
+                        end
+                        if not anyPromo then
+                            ownerPlayer._s.blockingType = EndTurnBlockingTypes.NO_ENDTURN_BLOCKING_TYPE
+                        end
+                    end
+                end
+                if (w.cityActionDelayTicks or 0) <= 0 then
+                    applyFn()
+                else
+                    table.insert(w.pendingCityActions, { ticksLeft = w.cityActionDelayTicks, apply = applyFn })
+                end
+                return
+            end
             if actionType == "MISSION_FORTIFY" then
                 head._s.fortifyTurns = (head._s.fortifyTurns or 0) + 1
                 head._s.readyToMove = false
@@ -1522,6 +1765,90 @@ local function makeNetwork(w)
                     cost = cost,
                     ticksLeft = w.plotBuyDelayTicks,
                 })
+            end
+        end,
+        SendResearch = function(eTech, iDiscover, iPlayer, bShift)
+            S.recordWrite(w, "SendResearch", {
+                techID = eTech,
+                discover = iDiscover,
+                stealingPlayer = iPlayer,
+                shift = bShift,
+            })
+            local playerId = w.activePlayer
+            local applyFn = function()
+                local pPlayer = w.players[playerId]
+                if pPlayer == nil then return end
+                local pTeam = w.teams[pPlayer._s.team]
+                if type(iDiscover) == "number" and iDiscover > 0 then
+                    if pTeam ~= nil then
+                        pTeam._s.techs[eTech] = true
+                    end
+                    pPlayer._s.freeTechs = math.max(0, (pPlayer._s.freeTechs or 0) - 1)
+                    if type(pPlayer._s.canResearch) == "table" then
+                        pPlayer._s.canResearch[eTech] = nil
+                    end
+                    if pPlayer._s.blockingType == EndTurnBlockingTypes.ENDTURN_BLOCKING_FREE_TECH
+                        and pPlayer._s.freeTechs <= 0
+                    then
+                        pPlayer._s.blockingType = EndTurnBlockingTypes.NO_ENDTURN_BLOCKING_TYPE
+                    end
+                else
+                    pPlayer._s.currentResearch = eTech
+                    if pPlayer._s.blockingType == EndTurnBlockingTypes.ENDTURN_BLOCKING_RESEARCH then
+                        pPlayer._s.blockingType = EndTurnBlockingTypes.NO_ENDTURN_BLOCKING_TYPE
+                    end
+                end
+            end
+            if (w.cityActionDelayTicks or 0) <= 0 then
+                applyFn()
+            else
+                table.insert(w.pendingCityActions, { ticksLeft = w.cityActionDelayTicks, apply = applyFn })
+            end
+        end,
+        SendUpdatePolicies = function(eId, bIsPolicy, bAdopt)
+            S.recordWrite(w, "SendUpdatePolicies", {
+                targetID = eId,
+                isPolicy = bIsPolicy,
+                adopt = bAdopt,
+            })
+            local playerId = w.activePlayer
+            local applyFn = function()
+                local pPlayer = w.players[playerId]
+                if pPlayer == nil then return end
+                local isTenet = false
+                if bIsPolicy == true then
+                    local row = w.info.Policies and w.info.Policies[eId] or nil
+                    local bRow = (row ~= nil and row.PolicyBranchType ~= nil and GameInfo ~= nil and GameInfo.PolicyBranchTypes ~= nil)
+                        and GameInfo.PolicyBranchTypes[row.PolicyBranchType] or nil
+                    isTenet = (bRow ~= nil and bRow.PurchaseByLevel == true)
+                    pPlayer._s.policies[eId] = true
+                else
+                    pPlayer._s.unlockedBranches[eId] = true
+                end
+                if isTenet and (pPlayer._s.freeTenets or 0) > 0 then
+                    pPlayer._s.freeTenets = math.max(0, pPlayer._s.freeTenets - 1)
+                elseif (pPlayer._s.freePolicies or 0) > 0 then
+                    pPlayer._s.freePolicies = math.max(0, pPlayer._s.freePolicies - 1)
+                else
+                    local cost = pPlayer._s.nextPolicyCost or 25
+                    pPlayer._s.culture = math.max(0, (pPlayer._s.culture or 0) - cost)
+                    pPlayer._s.nextPolicyCost = cost + 20
+                end
+                local bt = pPlayer._s.blockingType
+                if bt == EndTurnBlockingTypes.ENDTURN_BLOCKING_POLICY
+                    or bt == EndTurnBlockingTypes.ENDTURN_BLOCKING_FREE_POLICY
+                then
+                    if (pPlayer._s.freePolicies or 0) <= 0
+                        and (pPlayer._s.culture or 0) < (pPlayer._s.nextPolicyCost or 25)
+                    then
+                        pPlayer._s.blockingType = EndTurnBlockingTypes.NO_ENDTURN_BLOCKING_TYPE
+                    end
+                end
+            end
+            if (w.cityActionDelayTicks or 0) <= 0 then
+                applyFn()
+            else
+                table.insert(w.pendingCityActions, { ticksLeft = w.cityActionDelayTicks, apply = applyFn })
             end
         end,
     }
@@ -1923,11 +2250,12 @@ function WorldMethods:clearLog() self.log = {} end
 
 local WORLD_OPTION_FIELDS = fieldSet({
     "width", "height", "activePlayer", "turn", "processingMessages", "canEndTurn",
-    "plotBuyDelayTicks", "cityActionDelayTicks", "cityScreenUp", "gameDefines",
+    "plotBuyDelayTicks", "cityActionDelayTicks", "cityScreenUp", "gameDefines", "gameOptions",
     "teams", "players", "wars", "revealAll", "visibleAll", "units", "cities", "select",
 }, {
     width = 24, height = 20, activePlayer = 0, turn = 1, processingMessages = false,
     canEndTurn = true, plotBuyDelayTicks = 1, cityActionDelayTicks = 0, cityScreenUp = false,
+    gameOptions = {},
 })
 
 local ALLOWED_CASE_GLOBALS = {
@@ -1965,6 +2293,7 @@ function S.newWorld(opts)
         activePlayer = o.activePlayer,
         turn = o.turn,
         processingMessages = o.processingMessages,
+        gameOptions = deepCopy(o.gameOptions or {}),
         plotBuyDelayTicks = o.plotBuyDelayTicks,
         cityActionDelayTicks = o.cityActionDelayTicks,
         pendingPlotBuys = {},

@@ -217,6 +217,9 @@ test("T-00", "WP1 冒烟与静态红线：CAB_TaskExecutor.lua 加载洁净、�
         "ExecuteEndTurn",
         "IsSettlementBusy",
         "FinalizeActionSettlement",
+        "SetResearchTech",
+        "AdoptPolicyOrBranch",
+        "PromoteUnit",
     }
     local expectedSet = {}
     for _, fnName in ipairs(expectedExports) do
@@ -229,7 +232,7 @@ test("T-00", "WP1 冒烟与静态红线：CAB_TaskExecutor.lua 加载洁净、�
         truthy(expectedSet[k] == true, "A-01：CAB_Executor 不得包含未规划导出键 " .. tostring(k))
         isType(v, "function", "A-01：CAB_Executor." .. tostring(k) .. " 必须为函数")
     end
-    eq(actualExportCount, 9, "A-01：CAB_Executor 导出函数总数必须精确为 9")
+    eq(actualExportCount, 12, "A-01：CAB_Executor 导出函数总数必须精确为 12")
 
     -- CAB_TaskExecutor 直接 include CAB_Config + CAB_InfoCollector，后者内部再 include CAB_Config 一次
     same(
@@ -1854,6 +1857,279 @@ test("T-32", "WP4 E-06 IGE 动态变阵与零缓存联调：即时注金、清�
     same(dtoEt.auto_skipped_unit_ids, { liveUnit:GetID() }, "E-06：必须跳过存活单位且绝不把 delayedDeath 幽灵单位纳入跳过列表")
     truthy(ghostUnit:IsDelayedDeath(), "幽灵单位未被误操作")
     eq(#w:queriesOnForbiddenFog("CanRangeStrikeAt"), 0, "E-03：全程零迷雾违禁探测")
+end)
+
+-- -----------------------------------------------------------------------------
+-- 第 6.5 节：WP5 三大回合硬阻塞安全写动作与跨帧异步结算用例（T-33 ~ T-37）
+-- -----------------------------------------------------------------------------
+
+test("T-33", "WP5 SetResearchTech：常规/免费科技、跨帧结算、超时兜底与前置拦截", function()
+    ensureModulesLoaded()
+    -- 1. 常规科研跨帧异步结算（cityActionDelayTicks = 2）
+    local w = S.newWorld({
+        cityActionDelayTicks = 2,
+        teams = { { id = 0, techs = { [0] = true } } },
+        players = {
+            {
+                id = 0, team = 0, science = 10,
+                canResearch = { [1] = true, [2] = true },
+                blockingType = EndTurnBlockingTypes.ENDTURN_BLOCKING_RESEARCH,
+            },
+        },
+    })
+
+    -- 前置失败：未知科技、已研究科技、前置未满
+    local okBad, _, baseBad = CAB_Executor.SetResearchTech(0, "TECH_NONEXISTENT")
+    falsy(okBad, "未知科技应失败")
+    isNil(baseBad, "失败无基线")
+    local okOwned = CAB_Executor.SetResearchTech(0, "TECH_AGRICULTURE")
+    falsy(okOwned, "已研究非 Repeat 科技应失败")
+    local okPrereq = CAB_Executor.SetResearchTech(0, "TECH_WRITING")
+    falsy(okPrereq, "前置未满科技应失败")
+    eq(w:writeCount(), 0, "E-02：前置失败零写入")
+
+    -- 正常选择 TECH_POTTERY
+    local okSet, errSet, base = CAB_Executor.SetResearchTech(0, "TECH_POTTERY")
+    truthy(okSet, "选择 TECH_POTTERY 应成功：" .. tostring(errSet))
+    eq(base.settlementKind, "SET_RESEARCH", "settlementKind 应为 SET_RESEARCH")
+    eq(base.minWaitSec, CAB_Config.PLOT_BUY_SETTLE_SEC, "应采用 0.10s 短结算等待")
+    eq(w:writeCount("SendResearch"), 1, "应调用 1 次 Network.SendResearch")
+    truthy(CAB_Executor.IsSettlementBusy(base), "消息队列未落地前应保持忙碌")
+
+    -- 超时兜底测试（未 tick 直接 Finalize）
+    local dtoTimeout = CAB_Executor.FinalizeActionSettlement(base, 1500)
+    falsy(dtoTimeout.executed, "未落地超时应返回 executed=false")
+    truthy(dtoTimeout.timed_out, "应标记 timed_out=true")
+    notNil(dtoTimeout.error_reason, "应附带超时错误说明")
+
+    -- 推进 2 帧后落地
+    w:tickSettlement(2)
+    falsy(CAB_Executor.IsSettlementBusy(base), "2 帧落地后应不再忙碌")
+    local dtoDone = CAB_Executor.FinalizeActionSettlement(base, 110)
+    truthy(dtoDone.executed, "落地后应返回 executed=true")
+    falsy(dtoDone.timed_out, "落地后 timed_out=false")
+    eq(dtoDone.current_research_type, "TECH_POTTERY", "应回读到 TECH_POTTERY")
+    eq(Players[0]:GetEndTurnBlockingType(), EndTurnBlockingTypes.NO_ENDTURN_BLOCKING_TYPE, "科研阻塞应已解除")
+
+    -- 2. 免费科技模式（ENDTURN_BLOCKING_FREE_TECH）
+    local wFree = S.newWorld({
+        cityActionDelayTicks = 1,
+        teams = { { id = 0, techs = { [0] = true } } },
+        players = {
+            {
+                id = 0, team = 0, science = 10, freeTechs = 1,
+                canResearch = { [1] = true, [2] = true },
+                canResearchForFree = { [1] = true },
+                blockingType = EndTurnBlockingTypes.ENDTURN_BLOCKING_FREE_TECH,
+            },
+        },
+    })
+    falsy(CAB_Executor.SetResearchTech(0, "TECH_ANIMAL_HUSBANDRY"), "未通过 CanResearchForFree 的科技应被拦截")
+    local okFree, errFree, baseFree = CAB_Executor.SetResearchTech(0, 1) -- 支持整数 ID
+    truthy(okFree, "免费科技应支持整数 ID 并成功：" .. tostring(errFree))
+    truthy(baseFree.isFreeTech, "应标记 isFreeTech=true")
+    truthy(CAB_Executor.IsSettlementBusy(baseFree), "落地前忙碌")
+    wFree:tickSettlement(1)
+    falsy(CAB_Executor.IsSettlementBusy(baseFree), "免费科技落地后解除忙碌")
+    local dtoFree = CAB_Executor.FinalizeActionSettlement(baseFree, 100)
+    truthy(dtoFree.executed, "免费科技应 executed=true")
+    eq(dtoFree.free_techs_before, 1, "free_techs_before=1")
+    eq(dtoFree.free_techs_after, 0, "free_techs_after=0")
+    truthy(Teams[0]:GetTeamTechs():HasTech(1), "队伍应已掌握该免费科技")
+end)
+
+test("T-34", "WP5 AdoptPolicyOrBranch：分支开启、政策/信条采纳、错误细分与跨帧结算", function()
+    ensureModulesLoaded()
+    local w = S.newWorld({
+        cityActionDelayTicks = 2,
+        teams = { { id = 0, currentEra = 0 } },
+        players = {
+            {
+                id = 0, team = 0, culture = 30, nextPolicyCost = 25,
+                canAdoptPolicy = { [1] = true }, -- POLICY_ARISTOCRACY
+                blockingType = EndTurnBlockingTypes.ENDTURN_BLOCKING_POLICY,
+            },
+        },
+        cities = { { owner = 0, name = "Beijing", x = 5, y = 5, isCapital = true } },
+    })
+
+    -- 拦截非法操作（意识形态分支、时代未达分支、自动开门政策、前置未满政策）
+    local okIdeo, errIdeo = CAB_Executor.AdoptPolicyOrBranch(0, "BRANCH", "POLICY_BRANCH_FREEDOM")
+    falsy(okIdeo, "应拦截 PurchaseByLevel 意识形态分支")
+    truthy(errIdeo:find("SendIdeologyChoice", 1, true) ~= nil, "应提示需走 SendIdeologyChoice")
+
+    local okEra, errEra = CAB_Executor.AdoptPolicyOrBranch(0, "BRANCH", "POLICY_BRANCH_RATIONALISM")
+    falsy(okEra, "应拦截时代未达的理性主义分支")
+    truthy(errEra:find("ERA_RENAISSANCE", 1, true) ~= nil, "应细分提示缺少时代前置")
+
+    falsy(CAB_Executor.AdoptPolicyOrBranch(0, "POLICY", "POLICY_TRADITION"), "应拦截 PolicyBranchType==nil 自动开门政策")
+    falsy(CAB_Executor.AdoptPolicyOrBranch(0, "POLICY", "POLICY_REPUBLIC"), "应拦截前置未满政策")
+    eq(w:writeCount(), 0, "E-02：前置失败零写入")
+
+    -- 1. 开启常规分支 POLICY_BRANCH_TRADITION（跨帧结算）
+    local okBr, errBr, baseBr = CAB_Executor.AdoptPolicyOrBranch(0, "BRANCH", "POLICY_BRANCH_TRADITION")
+    truthy(okBr, "开启传统分支应成功：" .. tostring(errBr))
+    eq(baseBr.settlementKind, "ADOPT_POLICY", "settlementKind=ADOPT_POLICY")
+    eq(w:writeCount("SendUpdatePolicies"), 1, "应调用 1 次 Network.SendUpdatePolicies")
+    truthy(CAB_Executor.IsSettlementBusy(baseBr), "落地前忙碌")
+    w:tickSettlement(2)
+    falsy(CAB_Executor.IsSettlementBusy(baseBr), "落地后解除忙碌")
+    local dtoBr = CAB_Executor.FinalizeActionSettlement(baseBr, 105)
+    truthy(dtoBr.adopted, "分支应 adopted=true")
+    eq(dtoBr.culture_before, 30, "文化扣前 30")
+    eq(dtoBr.culture_after, 5, "文化扣后 5")
+    eq(dtoBr.next_policy_cost_after, 45, "下次政策花费应上涨至 45")
+
+    -- 2. 文化不足细分报错（需 45，仅剩 5）
+    local okPoor, errPoor = CAB_Executor.AdoptPolicyOrBranch(0, "POLICY", "POLICY_ARISTOCRACY")
+    falsy(okPoor, "文化不足应拦截")
+    truthy(errPoor:find("Insufficient culture", 1, true) ~= nil, "应细分提示文化不足")
+
+    -- 3. 补足免费政策后采纳 POLICY_ARISTOCRACY
+    w:setPlayer(0, { freePolicies = 1, blockingType = EndTurnBlockingTypes.ENDTURN_BLOCKING_FREE_POLICY })
+    local okPol, errPol, basePol = CAB_Executor.AdoptPolicyOrBranch(0, "POLICY", "POLICY_ARISTOCRACY")
+    truthy(okPol, "免费政策采纳贵族应成功：" .. tostring(errPol))
+    w:tickSettlement(2)
+    local dtoPol = CAB_Executor.FinalizeActionSettlement(basePol, 100)
+    truthy(dtoPol.adopted, "政策采纳应 adopted=true")
+    eq(dtoPol.free_policies_before, 1, "free_policies_before=1")
+    eq(dtoPol.free_policies_after, 0, "free_policies_after=0")
+    truthy(Players[0]:HasPolicy(1), "玩家应已拥有 POLICY_ARISTOCRACY")
+
+    -- 4. 意识形态信条采纳
+    w:setPlayer(0, {
+        ideologyBranch = 5,
+        freeTenets = 1,
+        availableTenets = { [1] = { 5 } },
+    })
+    local okTen, errTen, baseTen = CAB_Executor.AdoptPolicyOrBranch(0, "POLICY", "POLICY_AVANT_GARDE")
+    truthy(okTen, "采纳 1 级自由信条应成功：" .. tostring(errTen))
+    w:tickSettlement(2)
+    local dtoTen = CAB_Executor.FinalizeActionSettlement(baseTen, 100)
+    truthy(dtoTen.adopted, "意识形态信条应 adopted=true")
+end)
+
+test("T-35", "WP5 PromoteUnit：常规晋升、InstaHeal、选区无痕恢复与跨帧结算", function()
+    ensureModulesLoaded()
+    local w = S.newWorld({
+        cityActionDelayTicks = 2,
+        players = TWO_PLAYERS,
+    })
+    local prevSelected = w:addUnit({ owner = 0, unitType = "UNIT_ARCHER", x = 4, y = 5 })
+    local warrior = w:addUnit({
+        owner = 0, unitType = "UNIT_WARRIOR", x = 5, y = 5,
+        damage = 40, level = 1, promotionReady = true,
+        availablePromotions = { [0] = true, [3] = true }, -- SHOCK_1 + INSTA_HEAL
+    })
+    w:setPlayer(0, { blockingType = EndTurnBlockingTypes.ENDTURN_BLOCKING_UNIT_PROMOTION })
+    w:select(prevSelected)
+
+    -- 非法晋升前置拦截（零写入、选区不变）
+    falsy(CAB_Executor.PromoteUnit(0, warrior:GetID(), "PROMOTION_EMBARKATION"), "CannotBeChosen 应拦截")
+    falsy(CAB_Executor.PromoteUnit(0, warrior:GetID(), "PROMOTION_DRILL_1"), "不可获取晋升应拦截")
+    eq(w:writeCount(), 0, "E-02：失败零写入")
+    eq(UI.GetHeadSelectedUnit(), prevSelected, "E-02：失败后原 UI 选区不得改变")
+
+    -- 1. 常规永久晋升 PROMOTION_SHOCK_1
+    local okP1, errP1, baseP1 = CAB_Executor.PromoteUnit(0, warrior:GetID(), "PROMOTION_SHOCK_1")
+    truthy(okP1, "晋升 PROMOTION_SHOCK_1 应成功：" .. tostring(errP1))
+    eq(baseP1.settlementKind, "PROMOTE_UNIT", "settlementKind=PROMOTE_UNIT")
+    eq(UI.GetHeadSelectedUnit(), prevSelected, "E-02：PromoteUnit 下发后必须无条件恢复原 UI 选区")
+    truthy(CAB_Executor.IsSettlementBusy(baseP1), "落地前保持忙碌")
+    w:tickSettlement(2)
+    falsy(CAB_Executor.IsSettlementBusy(baseP1), "2 帧后晋升落地")
+    local dtoP1 = CAB_Executor.FinalizeActionSettlement(baseP1, 105)
+    truthy(dtoP1.promoted, "应返回 promoted=true")
+    eq(dtoP1.level_before, 1, "level_before=1")
+    eq(dtoP1.level_after, 2, "level_after=2")
+    falsy(dtoP1.is_promotion_ready_after, "晋升后 is_promotion_ready_after=false")
+    truthy(warrior:IsHasPromotion(0), "单位应已持有 PROMOTION_SHOCK_1")
+    eq(Players[0]:GetEndTurnBlockingType(), EndTurnBlockingTypes.NO_ENDTURN_BLOCKING_TYPE, "晋升阻塞应已解除")
+
+    -- 2. InstaHeal 立即回血晋升（不驻留 IsHasPromotion，靠等级/HP 恢复判定）
+    w:setUnit(warrior, { promotionReady = true, damage = 45, availablePromotions = { [3] = true } })
+    local okHeal, errHeal, baseHeal = CAB_Executor.PromoteUnit(0, warrior:GetID(), "PROMOTION_INSTA_HEAL")
+    truthy(okHeal, "伤血单位 InstaHeal 应成功：" .. tostring(errHeal))
+    truthy(baseHeal.isInstaHeal, "应标记 isInstaHeal=true")
+    eq(UI.GetHeadSelectedUnit(), prevSelected, "InstaHeal 后原选区同样保持不变")
+    w:tickSettlement(2)
+    falsy(CAB_Executor.IsSettlementBusy(baseHeal), "InstaHeal 落地后应解除忙碌")
+    local dtoHeal = CAB_Executor.FinalizeActionSettlement(baseHeal, 100)
+    truthy(dtoHeal.promoted, "InstaHeal 应返回 promoted=true")
+    eq(dtoHeal.level_after, 3, "等级升至 3")
+    eq(dtoHeal.unit_after.hp, 100, "InstaHeal 应回复至满血 100 HP")
+end)
+
+test("T-36", "WP5 E-01/E-02 写门控与异常入参防御：三新接口非活动回合/消息忙零写入", function()
+    ensureModulesLoaded()
+    local w = S.newWorld({
+        players = {
+            { id = 0, team = 0, turnActive = false, culture = 50, canResearch = { [1] = true } },
+        },
+        cities = { { owner = 0, name = "Beijing", x = 5, y = 5 } },
+    })
+    local u = w:addUnit({ owner = 0, unitType = "UNIT_WARRIOR", x = 5, y = 5, promotionReady = true, availablePromotions = { [0] = true } })
+
+    -- AI 非活动回合全部拦截
+    falsy(CAB_Executor.SetResearchTech(0, "TECH_POTTERY"), "非活动回合 SetResearchTech 拦截")
+    falsy(CAB_Executor.AdoptPolicyOrBranch(0, "BRANCH", "POLICY_BRANCH_TRADITION"), "非活动回合 AdoptPolicyOrBranch 拦截")
+    falsy(CAB_Executor.PromoteUnit(0, u:GetID(), "PROMOTION_SHOCK_1"), "非活动回合 PromoteUnit 拦截")
+
+    -- 消息队列忙全部拦截
+    w:setPlayer(0, { turnActive = true })
+    w.processingMessages = true
+    falsy(CAB_Executor.SetResearchTech(0, "TECH_POTTERY"), "消息忙 SetResearchTech 拦截")
+    falsy(CAB_Executor.AdoptPolicyOrBranch(0, "BRANCH", "POLICY_BRANCH_TRADITION"), "消息忙 AdoptPolicyOrBranch 拦截")
+    falsy(CAB_Executor.PromoteUnit(0, u:GetID(), "PROMOTION_SHOCK_1"), "消息忙 PromoteUnit 拦截")
+    eq(w:writeCount(), 0, "E-01：门控拦截期间引擎写计数必须为 0")
+end)
+
+test("T-37", "WP5 端到端闭环：纯接口依次解除科研/政策/晋升三大硬阻塞后 ExecuteEndTurn 成功", function()
+    ensureModulesLoaded()
+    local w = S.newWorld({
+        players = {
+            {
+                id = 0, team = 0, science = 8, culture = 30, nextPolicyCost = 25,
+                canResearch = { [1] = true },
+                blockingType = EndTurnBlockingTypes.ENDTURN_BLOCKING_RESEARCH,
+            },
+        },
+        cities = { { owner = 0, name = "Beijing", x = 5, y = 5, isCapital = true, orderQueueLength = 1 } },
+    })
+    local u = w:addUnit({
+        owner = 0, unitType = "UNIT_WARRIOR", x = 5, y = 5,
+        moves = 0, readyToMove = false, promotionReady = true,
+        availablePromotions = { [0] = true },
+    })
+
+    -- 1. 科研阻塞期间 ExecuteEndTurn 应拒返 BLOCKED
+    local okEt1, _, dtoEt1 = CAB_Executor.ExecuteEndTurn(0, true)
+    falsy(okEt1, "科研阻塞期间不得结束回合")
+    eq(dtoEt1.blocking_info.blocking_type_name, "ENDTURN_BLOCKING_RESEARCH", "诊断为科研阻塞")
+    local okR, _, bR = CAB_Executor.SetResearchTech(0, "TECH_POTTERY")
+    truthy(okR and CAB_Executor.FinalizeActionSettlement(bR, 100).executed, "科研设置成功")
+
+    -- 2. 切至政策阻塞并解除
+    w:setPlayer(0, { blockingType = EndTurnBlockingTypes.ENDTURN_BLOCKING_POLICY })
+    local okEt2, _, dtoEt2 = CAB_Executor.ExecuteEndTurn(0, true)
+    falsy(okEt2, "政策阻塞期间不得结束回合")
+    eq(dtoEt2.blocking_info.blocking_type_name, "ENDTURN_BLOCKING_POLICY", "诊断为政策阻塞")
+    local okP, _, bP = CAB_Executor.AdoptPolicyOrBranch(0, "BRANCH", "POLICY_BRANCH_TRADITION")
+    truthy(okP and CAB_Executor.FinalizeActionSettlement(bP, 100).adopted, "政策分支开启成功")
+
+    -- 3. 切至单位晋升阻塞并解除
+    w:setPlayer(0, { blockingType = EndTurnBlockingTypes.ENDTURN_BLOCKING_UNIT_PROMOTION })
+    local okEt3, _, dtoEt3 = CAB_Executor.ExecuteEndTurn(0, true)
+    falsy(okEt3, "晋升阻塞期间不得结束回合")
+    eq(dtoEt3.blocking_info.blocking_type_name, "ENDTURN_BLOCKING_UNIT_PROMOTION", "诊断为晋升阻塞")
+    local okU, _, bU = CAB_Executor.PromoteUnit(0, u:GetID(), "PROMOTION_SHOCK_1")
+    truthy(okU and CAB_Executor.FinalizeActionSettlement(bU, 100).promoted, "单位晋升成功")
+
+    -- 4. 三大硬阻塞均已解除，ExecuteEndTurn 成功提交 CONTROL_ENDTURN
+    local okEt4, _, dtoEt4 = CAB_Executor.ExecuteEndTurn(0, false)
+    truthy(okEt4, "全部硬阻塞解除后 ExecuteEndTurn 应成功")
+    truthy(dtoEt4.turn_ended, "turn_ended=true")
+    truthy(w.endTurnRequested, "应提交 CONTROL_ENDTURN")
 end)
 
 -- -----------------------------------------------------------------------------

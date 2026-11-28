@@ -317,7 +317,7 @@ test("T-00", "冒烟与静态红线：CAB_InfoCollector.lua 加载洁净、导�
         truthy(allowed[name] ~= nil, "CAB_InfoCollector 不得新增全局变量 " .. name)
     end
 
-    -- 校验 M1Sub1 全部 7 个复用辅助函数与 7 个主查询接口（共 14 项）已精确导出
+    -- 校验 M1Sub1 7 个复用辅助函数 + 10 个主查询接口（原 7 项 + WP5 3 项，共 17 项）已精确导出
     local expectedExports = {
         "SerializeUnitSummary",
         "SerializeEnemyUnit",
@@ -333,8 +333,11 @@ test("T-00", "冒烟与静态红线：CAB_InfoCollector.lua 加载洁净、导�
         "BuildTurnOverview",
         "BuildUnitContextAndCandidates",
         "GetCityDetail",
+        "GetResearchOptions",
+        "GetPolicyOptions",
+        "GetUnitPromotions",
     }
-    exactKeys(CAB_Collector, expectedExports, "CAB_Collector 应恰好导出 7 个辅助函数 + 7 个主查询接口")
+    exactKeys(CAB_Collector, expectedExports, "CAB_Collector 应恰好导出 7 个辅助函数 + 10 个主查询接口")
     for _, fnName in ipairs(expectedExports) do
         isType(CAB_Collector[fnName], "function", "CAB_Collector." .. fnName .. " 应导出为 function")
     end
@@ -2680,6 +2683,208 @@ test("T-35", "F7：动态 GameDefines 生效（CITY_ATTACK_RANGE=3 扩展城防�
     eq(detail.ranged_attack_targets[1].distance, 3, "目标距离应为 3")
     eq(detail.ranged_attack_targets[1].hp, 85, "目标血量应为 85")
     eq(#detail.purchasable_plots, 0, "BUY_PLOTS_DISABLED=1 时 purchasable_plots 必须强制为空表")
+end)
+
+-- -----------------------------------------------------------------------------
+-- 第 6.5 节：M1Sub3 WP5（D-08）三大回合硬阻塞只读查询接口用例（T-36 ~ T-39）
+-- -----------------------------------------------------------------------------
+
+test("T-36", "F8：GetResearchOptions 常规研究、免费科技过滤、禁用科研与非法玩家兜底", function()
+    ensureCollectorLoaded()
+    local w = S.newWorld({
+        teams = { { id = 0, techs = { [0] = true } } }, -- 已掌握 TECH_AGRICULTURE
+        players = {
+            {
+                id = 0, team = 0, civ = "China", science = 10, overflowResearch = 4,
+                currentResearch = 1, -- TECH_POTTERY
+                canResearch = { [1] = true, [2] = true, [3] = true },
+                researchProgress = { [1] = 15 },
+            },
+        },
+    })
+    local dto = CAB_Collector.GetResearchOptions(0)
+    truthy(dto.__is_object, "DTO 应带 __is_object")
+    falsy(dto.science_disabled, "科研未禁用")
+    eq(dto.science_per_turn, 10, "回合科研")
+    eq(dto.overflow_research, 4, "溢出科研")
+    eq(dto.free_techs_available, 0, "无免费科技")
+    falsy(dto.is_free_tech_pending, "非免费科技待选态")
+    notNil(dto.current_research, "应包含 current_research")
+    eq(dto.current_research.tech_type, "TECH_POTTERY", "当前研究科技名匹配")
+    eq(dto.current_research.progress, 15, "当前研究进度匹配")
+    eq(dto.current_research.cost, 35, "当前研究花费匹配")
+    eq(dto.current_research.turns_left, 2, "当前研究剩余回合匹配")
+    same(dto.researched_techs, { "TECH_AGRICULTURE" }, "已研究科技列表匹配")
+    eq(#dto.available_techs, 3, "常规可选科技数应为 3")
+
+    -- 免费科技模式：仅保留 CanResearchForFree == true 的科技
+    local wFree = S.newWorld({
+        teams = { { id = 0, techs = { [0] = true } } },
+        players = {
+            {
+                id = 0, team = 0, civ = "China", science = 10, freeTechs = 1,
+                canResearch = { [1] = true, [2] = true, [5] = true },
+                canResearchForFree = { [1] = true, [5] = true },
+            },
+        },
+    })
+    local dtoFree = CAB_Collector.GetResearchOptions(0)
+    truthy(dtoFree.is_free_tech_pending, "应标记 is_free_tech_pending=true")
+    eq(dtoFree.free_techs_available, 1, "free_techs_available=1")
+    isNil(dtoFree.current_research, "无当前研究时应省略 current_research")
+    eq(#dtoFree.available_techs, 2, "免费科技应经 CanResearchForFree 过滤为 2 项")
+
+    -- GAMEOPTION_NO_SCIENCE 禁用科研
+    S.newWorld({
+        gameOptions = { [GameOptionTypes.GAMEOPTION_NO_SCIENCE] = true },
+        players = { { id = 0, team = 0, canResearch = { [1] = true } } },
+    })
+    local dtoNoSci = CAB_Collector.GetResearchOptions(0)
+    truthy(dtoNoSci.science_disabled, "应标记 science_disabled=true")
+    eq(#dtoNoSci.available_techs, 0, "禁用科研时可选科技为空")
+
+    -- 非法玩家兜底
+    local bad = CAB_Collector.GetResearchOptions(99)
+    truthy(bad.__is_object, "错误表带 __is_object")
+    notNil(bad.error, "非法玩家应返回 error")
+    eq(w:logCount("SelectUnit"), 0, "GetResearchOptions 零 UI 选区调用")
+end)
+
+test("T-37", "F9：GetPolicyOptions 常规分支、政策采纳、意识形态信条与无城/禁用规则守卫", function()
+    ensureCollectorLoaded()
+    local w = S.newWorld({
+        teams = { { id = 0, currentEra = 0 } }, -- ERA_ANCIENT
+        players = {
+            {
+                id = 0, team = 0, civ = "China",
+                culture = 40, culturePerTurn = 6, nextPolicyCost = 25,
+                unlockedBranches = { [0] = true }, -- POLICY_BRANCH_TRADITION 已开
+                policies = { [1] = true }, -- POLICY_ARISTOCRACY 已采纳
+                canAdoptPolicy = { [2] = true, [3] = true }, -- OLIGARCHY / LEGALISM
+            },
+        },
+        cities = { { owner = 0, name = "Beijing", x = 5, y = 5, isCapital = true } },
+    })
+
+    local dto = CAB_Collector.GetPolicyOptions(0)
+    truthy(dto.__is_object, "DTO 应带 __is_object")
+    falsy(dto.policies_disabled, "政策未禁用")
+    eq(dto.culture, 40, "文化余额匹配")
+    eq(dto.next_policy_cost, 25, "下一次政策花费匹配")
+    eq(dto.num_cities, 1, "城市数为 1")
+    truthy(dto.can_adopt_now, "满足文化花费应 can_adopt_now=true")
+    -- 常规分支仅 5 个（排除 PurchaseByLevel=true 的 FREEDOM 意识形态分支）
+    eq(#dto.policy_branches, 5, "常规政策分支表应排除意识形态分支")
+    -- LIBERTY / HONOR / PIETY 可解锁（TRADITION 已开，RATIONALISM 需文艺复兴时代）
+    eq(#dto.unlockable_branches, 3, "应有 3 个当前可解锁常规分支")
+    eq(#dto.adoptable_policies, 2, "应有 2 项当前可采纳常规政策")
+    same(dto.adopted_policies, { "POLICY_ARISTOCRACY" }, "已采纳政策应跳过自动开门 POLICY_TRADITION")
+
+    -- 后期意识形态信条（已选 FREEDOM 且有 2 个 1 级信条槽位已填，应开放 2 级信条）
+    S.newWorld({
+        teams = { { id = 0, currentEra = 5 } },
+        players = {
+            {
+                id = 0, team = 0, culture = 0, nextPolicyCost = 500, freeTenets = 1,
+                ideologyBranch = 5, -- POLICY_BRANCH_FREEDOM
+                tenets = { [1] = { 101, 102 } },
+                availableTenets = { [1] = { 5 }, [2] = { 6 } },
+            },
+        },
+        cities = { { owner = 0, name = "Beijing", x = 5, y = 5, isCapital = true } },
+    })
+    local dtoIdeo = CAB_Collector.GetPolicyOptions(0)
+    eq(dtoIdeo.ideology_branch_type, "POLICY_BRANCH_FREEDOM", "意识形态分支名匹配")
+    truthy(dtoIdeo.can_adopt_now, "有免费信条应可采纳")
+    eq(#dtoIdeo.adoptable_policies, 2, "应列出 1 级与 2 级可用意识形态信条")
+    truthy(dtoIdeo.adoptable_policies[1].is_tenet, "信条应标记 is_tenet=true")
+
+    -- 0 座城市时严禁开启或采纳（SocialPolicyPopup.lua:234）
+    S.newWorld({
+        players = { { id = 0, team = 0, culture = 100, nextPolicyCost = 25, canAdoptPolicy = { [1] = true } } },
+    })
+    local dtoNoCity = CAB_Collector.GetPolicyOptions(0)
+    falsy(dtoNoCity.can_adopt_now, "无城市时 can_adopt_now=false")
+    eq(#dtoNoCity.unlockable_branches, 0, "无城市时无解锁分支")
+    eq(#dtoNoCity.adoptable_policies, 0, "无城市时无采纳政策")
+    eq(w:logCount("SelectUnit"), 0, "GetPolicyOptions 零 UI 选区调用")
+end)
+
+test("T-38", "F10：GetUnitPromotions 晋升就绪/未就绪、InstaHeal 满血过滤与零 UI 选区副作用", function()
+    ensureCollectorLoaded()
+    local w = S.newWorld({
+        players = TWO_PLAYERS,
+    })
+    local uReady = w:addUnit({
+        owner = 0, unitType = "UNIT_WARRIOR", x = 5, y = 5,
+        damage = 30, level = 2, experience = 32, experienceNeeded = 30,
+        promotionReady = true,
+        promotions = { [0] = true }, -- 已有 PROMOTION_SHOCK_1
+        availablePromotions = { [1] = true, [2] = true, [3] = true, [4] = true }, -- DRILL_1, SHOCK_2, INSTA_HEAL, EMBARKATION(CannotBeChosen)
+    })
+    local uFull = w:addUnit({
+        owner = 0, unitType = "UNIT_WARRIOR", x = 6, y = 5,
+        damage = 0, promotionReady = true,
+        availablePromotions = { [0] = true, [3] = true }, -- 满血不应出现 INSTA_HEAL
+    })
+    local uNotReady = w:addUnit({
+        owner = 0, unitType = "UNIT_ARCHER", x = 7, y = 5,
+        promotionReady = false,
+        availablePromotions = { [0] = true },
+    })
+    local enemy = w:addUnit({ id = 99, owner = 1, unitType = "UNIT_WARRIOR", x = 8, y = 5, promotionReady = true })
+
+    w:clearSelection()
+    local dto = CAB_Collector.GetUnitPromotions(0, uReady:GetID())
+    truthy(dto.__is_object, "DTO 应带 __is_object")
+    eq(dto.unit_id, uReady:GetID(), "单位 ID 匹配")
+    eq(dto.hp, 70, "伤血 HP 匹配")
+    eq(dto.level, 2, "等级匹配")
+    eq(dto.experience, 32, "经验匹配")
+    eq(dto.experience_needed, 30, "升级所需经验匹配")
+    truthy(dto.is_promotion_ready, "应处于待晋升态")
+    eq(#dto.earned_promotions, 1, "已获得晋升数为 1")
+    eq(dto.earned_promotions[1].promotion_type, "PROMOTION_SHOCK_1", "已获得晋升名匹配")
+    eq(#dto.available_promotions, 3, "可选晋升应排除 CannotBeChosen，保留 DRILL_1 / SHOCK_2 / INSTA_HEAL")
+
+    local dtoFull = CAB_Collector.GetUnitPromotions(0, uFull:GetID())
+    eq(#dtoFull.available_promotions, 1, "满血单位应过滤掉 INSTA_HEAL，仅留 SHOCK_1")
+    eq(dtoFull.available_promotions[1].promotion_type, "PROMOTION_SHOCK_1", "剩余晋升匹配")
+
+    local dtoNotReady = CAB_Collector.GetUnitPromotions(0, uNotReady:GetID())
+    falsy(dtoNotReady.is_promotion_ready, "未就绪单位标记 false")
+    eq(#dtoNotReady.available_promotions, 0, "未就绪单位可选晋升列表应为空")
+
+    -- 越权查敌军或非法 ID 返错
+    notNil(CAB_Collector.GetUnitPromotions(0, enemy:GetID()).error, "查非己方单位应返错")
+    notNil(CAB_Collector.GetUnitPromotions(0, "bad").error, "非整数 unitID 应返错")
+
+    -- 关键红线验证：全程零 UI.SelectUnit / ClearSelectionList 调用（支撑入 AI 白名单）
+    eq(w:logCount("SelectUnit"), 0, "GetUnitPromotions 必须零 UI.SelectUnit 选区副作用")
+    eq(w:logCount("ClearSelectionList"), 0, "GetUnitPromotions 必须零 ClearSelectionList 调用")
+end)
+
+test("T-39", "WP5 IGE 兼容（D-05）：科研/政策/晋升查询零跨调用缓存实时反映变更", function()
+    ensureCollectorLoaded()
+    local w = S.newWorld({
+        players = {
+            { id = 0, team = 0, science = 5, culture = 10, nextPolicyCost = 25, canResearch = { [1] = true } },
+        },
+        cities = { { owner = 0, name = "Beijing", x = 5, y = 5, isCapital = true } },
+    })
+    local u = w:addUnit({ owner = 0, unitType = "UNIT_WARRIOR", x = 5, y = 5, promotionReady = false })
+
+    eq(CAB_Collector.GetResearchOptions(0).free_techs_available, 0, "初始无免费科技")
+    falsy(CAB_Collector.GetPolicyOptions(0).can_adopt_now, "初始文化不足")
+    falsy(CAB_Collector.GetUnitPromotions(0, u:GetID()).is_promotion_ready, "初始不可晋升")
+
+    -- 模拟 IGE 即时修改
+    w:setPlayer(0, { freeTechs = 1, culture = 50 })
+    w:setUnit(u, { promotionReady = true, availablePromotions = { [0] = true } })
+
+    eq(CAB_Collector.GetResearchOptions(0).free_techs_available, 1, "IGE 后即时看到免费科技")
+    truthy(CAB_Collector.GetPolicyOptions(0).can_adopt_now, "IGE 加文化后即时可采纳政策")
+    eq(#CAB_Collector.GetUnitPromotions(0, u:GetID()).available_promotions, 1, "IGE 加经验后即时看到可选晋升")
 end)
 
 -- -----------------------------------------------------------------------------
